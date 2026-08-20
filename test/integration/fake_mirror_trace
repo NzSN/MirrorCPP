@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Executable wrapper: trace-driven fake-mirror scenario (design §8 north star).
+The ITF trace fixture path comes from env MIRRORCPP_TRACE (set by mbt_test.cpp)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import fake_mirror
+
+sys.exit(fake_mirror.run("trace"))

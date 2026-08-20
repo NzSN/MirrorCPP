@@ -1,0 +1,121 @@
+{
+  "#meta": {
+    "format": "ITF",
+    "varTypes": {
+      "hr": "Int",
+      "latest_hr": "Int",
+      "ticked": "Bool",
+      "action_taken": "Str",
+      "nondet_picks": "{ start_hr: Int, start_latest_hr: Int }",
+      "step_count": "Int"
+    },
+    "format-description": "https://apalache-mc.org/docs/adr/015adr-trace.html",
+    "description": "HourClock trace for MirrorCPP run_client_with_traces integration test"
+  },
+  "vars": [
+    "hr",
+    "latest_hr",
+    "ticked",
+    "action_taken",
+    "nondet_picks",
+    "step_count"
+  ],
+  "states": [
+    {
+      "#meta": {
+        "index": 0
+      },
+      "hr": {
+        "#bigint": "1"
+      },
+      "latest_hr": {
+        "#bigint": "1"
+      },
+      "ticked": false,
+      "action_taken": "init",
+      "nondet_picks": {
+        "start_hr": {
+          "#bigint": "1"
+        },
+        "start_latest_hr": {
+          "#bigint": "1"
+        }
+      },
+      "step_count": {
+        "#bigint": "0"
+      }
+    },
+    {
+      "#meta": {
+        "index": 1
+      },
+      "hr": {
+        "#bigint": "2"
+      },
+      "latest_hr": {
+        "#bigint": "1"
+      },
+      "ticked": true,
+      "action_taken": "tick",
+      "nondet_picks": {
+        "start_hr": {
+          "#bigint": "1"
+        },
+        "start_latest_hr": {
+          "#bigint": "1"
+        }
+      },
+      "step_count": {
+        "#bigint": "1"
+      }
+    },
+    {
+      "#meta": {
+        "index": 2
+      },
+      "hr": {
+        "#bigint": "3"
+      },
+      "latest_hr": {
+        "#bigint": "2"
+      },
+      "ticked": true,
+      "action_taken": "tick",
+      "nondet_picks": {
+        "start_hr": {
+          "#bigint": "1"
+        },
+        "start_latest_hr": {
+          "#bigint": "1"
+        }
+      },
+      "step_count": {
+        "#bigint": "2"
+      }
+    },
+    {
+      "#meta": {
+        "index": 3
+      },
+      "hr": {
+        "#bigint": "4"
+      },
+      "latest_hr": {
+        "#bigint": "3"
+      },
+      "ticked": true,
+      "action_taken": "tick",
+      "nondet_picks": {
+        "start_hr": {
+          "#bigint": "1"
+        },
+        "start_latest_hr": {
+          "#bigint": "1"
+        }
+      },
+      "step_count": {
+        "#bigint": "3"
+      }
+    }
+  ]
+}

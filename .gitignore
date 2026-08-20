@@ -1,0 +1,22 @@
+# Build output
+build/
+build-*/
+
+# AgentTeams state (never commit)
+.agent-teams/
+
+# Apalache / mirror working directories
+_apalache-out/
+.ref-*/
+
+# t13: ModelMirrors build tooling — whole third_party tree is build-time only
+# (captain decision: not vendored, like a fetched dependency), plus prebuilt
+# binary + generated test certs.
+third_party/
+.mirror-src/
+.mirror-bin/
+test/certs/
+
+# Python cache (fake-mirror harness)
+__pycache__/
+*.pyc

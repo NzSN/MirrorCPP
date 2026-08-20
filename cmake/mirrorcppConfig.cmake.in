@@ -1,0 +1,37 @@
+# mirrorcpp package config — consumed via find_package(mirrorcpp CONFIG).
+# Generated from cmake/mirrorcppConfig.cmake.in by configure_package_config_file.
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Optional TLS: required only when the installed library was built with TLS.
+if(@MIRRORCPP_WITH_TLS@)
+  find_dependency(OpenSSL 3.0)
+endif()
+
+# JSON DOM (header-only, always public).
+find_dependency(nlohmann_json 3.11)
+
+# Boost.Multiprecision is header-only. Consumers are expected to have Boost on
+# their own search path (the build tree's fetched headers are not installed);
+# keep the Boost::headers interface target reference resolvable either way.
+find_package(Boost 1.74 QUIET)
+if(NOT TARGET Boost::headers)
+  add_library(Boost::headers INTERFACE IMPORTED)
+  if(Boost_FOUND AND Boost_INCLUDE_DIR)
+    set_target_properties(Boost::headers PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIR}")
+  endif()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/mirrorcppTargets.cmake")
+
+# Re-attach the interface dependencies that were build-tree-only ($<BUILD_INTERFACE:...>)
+# so downstream consumers get include dirs and link flags transitively.
+if(TARGET mirrorcpp::mirrorcpp)
+  target_link_libraries(mirrorcpp::mirrorcpp INTERFACE nlohmann_json::nlohmann_json)
+  target_link_libraries(mirrorcpp::mirrorcpp INTERFACE Boost::headers)
+  if(@MIRRORCPP_WITH_TLS@)
+    target_link_libraries(mirrorcpp::mirrorcpp INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+  endif()
+endif()

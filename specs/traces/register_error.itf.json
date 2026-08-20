@@ -1,0 +1,116 @@
+{
+  "#meta": {
+    "format": "ITF",
+    "varTypes": {
+      "client_phase": "Str",
+      "client_closed": "Bool",
+      "action_taken": "Str",
+      "faulted": "Bool",
+      "client_to_mirror": "Seq(Int)",
+      "mirror_closed": "Bool",
+      "report_matches": "Bool",
+      "mirror_phase": "Str",
+      "mirror_flow": "Str",
+      "mirror_to_client": "Seq(Int)"
+    },
+    "format-description": "https://apalache-mc.org/docs/adr/015adr-trace.html",
+    "description": "Created by Apalache on Fri Aug 14 17:40:38 CST 2026"
+  },
+  "vars": [
+    "client_phase",
+    "client_closed",
+    "action_taken",
+    "faulted",
+    "client_to_mirror",
+    "mirror_closed",
+    "report_matches",
+    "mirror_phase",
+    "mirror_flow",
+    "mirror_to_client"
+  ],
+  "states": [
+    {
+      "#meta": {
+        "index": 0
+      },
+      "action_taken": "init",
+      "client_closed": false,
+      "client_phase": "idle",
+      "client_to_mirror": [],
+      "faulted": false,
+      "mirror_closed": false,
+      "mirror_flow": "none",
+      "mirror_phase": "idle",
+      "mirror_to_client": [],
+      "report_matches": false
+    },
+    {
+      "#meta": {
+        "index": 1
+      },
+      "action_taken": "ClientRegister",
+      "client_closed": false,
+      "client_phase": "waiting_validation",
+      "client_to_mirror": [
+        {
+          "#bigint": "0"
+        }
+      ],
+      "faulted": false,
+      "mirror_closed": false,
+      "mirror_flow": "none",
+      "mirror_phase": "idle",
+      "mirror_to_client": [],
+      "report_matches": false
+    },
+    {
+      "#meta": {
+        "index": 2
+      },
+      "action_taken": "MirrorRecvRegister",
+      "client_closed": false,
+      "client_phase": "waiting_validation",
+      "client_to_mirror": [],
+      "faulted": false,
+      "mirror_closed": false,
+      "mirror_flow": "traces",
+      "mirror_phase": "validating",
+      "mirror_to_client": [],
+      "report_matches": false
+    },
+    {
+      "#meta": {
+        "index": 3
+      },
+      "action_taken": "MirrorSendRegisterError",
+      "client_closed": false,
+      "client_phase": "waiting_validation",
+      "client_to_mirror": [],
+      "faulted": false,
+      "mirror_closed": false,
+      "mirror_flow": "traces",
+      "mirror_phase": "done",
+      "mirror_to_client": [
+        {
+          "#bigint": "1"
+        }
+      ],
+      "report_matches": false
+    },
+    {
+      "#meta": {
+        "index": 4
+      },
+      "action_taken": "ClientRecvRegisterError",
+      "client_closed": false,
+      "client_phase": "done",
+      "client_to_mirror": [],
+      "faulted": false,
+      "mirror_closed": false,
+      "mirror_flow": "traces",
+      "mirror_phase": "done",
+      "mirror_to_client": [],
+      "report_matches": false
+    }
+  ]
+}
