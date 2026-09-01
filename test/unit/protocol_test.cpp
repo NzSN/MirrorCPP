@@ -222,6 +222,14 @@ TEST_CASE("decode spec_validated valid + invalid shapes") {
   REQUIRE(*sv.invalid_text() == "Type error at line 3");
 }
 
+TEST_CASE("decode ignores additive unknown fields while dispatching on proto_step") {
+  const auto decoded = decode_mirror_message(
+      R"({"proto_step":"spec_validated","result":"valid","futureField":{"nested":true}})");
+  REQUIRE(decoded.has_value());
+  REQUIRE(std::holds_alternative<SpecValidated>(*decoded));
+  REQUIRE(std::get<SpecValidated>(*decoded).is_valid());
+}
+
 TEST_CASE("decode initial_state / next_step") {
   auto in = must_decode(R"({"proto_step":"initial_state","action":"Init","state":{"x":{"#bigint":"0"}}})");
   REQUIRE(std::holds_alternative<InitialState>(in));
@@ -707,4 +715,3 @@ TEST_CASE("register round-trips through JSON shape") {
   REQUIRE(j["traceConfig"]["numTraces"] == 4);
   REQUIRE(j["traceConfig"]["view"] == "v");
 }
-

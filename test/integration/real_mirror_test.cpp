@@ -88,6 +88,25 @@ StateComputer counter_computer() {
   };
 }
 
+StateComputer incorrect_counter_computer() {
+  auto correct = counter_computer();
+  return [correct = std::move(correct)](std::string_view action,
+                                        const State& params,
+                                        const State& prev) mutable -> State {
+    State state = correct(action, params, prev);
+    state["unexpected"] = Value(true);
+    return state;
+  };
+}
+
+bool is_extra_key_mismatch(const Result<void>& result) {
+  if (result || result.error().kind != ErrorKind::step_mismatch ||
+      !result.error().actual) {
+    return false;
+  }
+  return result.error().actual->contains("unexpected");
+}
+
 struct TestPki {
   std::filesystem::path dir;
   std::filesystem::path ca, server_cert, server_key, client_cert, client_key;
@@ -221,6 +240,22 @@ int scenario_counter_replay(const char* bin) {
   return 1;
 }
 
+int scenario_counter_mismatch(const char* bin) {
+  auto transport = spawn_mirror(bin);
+  if (!transport) return 1;
+  TraceGenerationConfig tc;
+  tc.num_traces = 10;
+  tc.view = "View";
+  auto result = run_client(*transport, counter_config(), tc,
+                           incorrect_counter_computer());
+  if (!is_extra_key_mismatch(result)) {
+    std::fprintf(stderr, "FAIL: incorrect Counter did not produce extra-key step_mismatch\n");
+    return 1;
+  }
+  std::puts("PASS: incorrect Counter is rejected with terminal step_mismatch");
+  return 0;
+}
+
 int scenario_counter_replay_mtls(const char* bin) {
   TestPki pki;
   const int port = free_loopback_port();
@@ -275,6 +310,20 @@ int scenario_counter_replay_mtls(const char* bin) {
     return 1;
   }
   std::puts("PASS: Counter generate+replay over real mTLS server mode");
+
+  auto bad_transport = connect_tls("127.0.0.1", static_cast<std::uint16_t>(port), opts);
+  auto bad_spec = spec_from_files(counter_spec_path());
+  if (!bad_transport || !bad_spec) {
+    std::fprintf(stderr, "FAIL: could not prepare mTLS mismatch replay\n");
+    return 1;
+  }
+  auto mismatch = run_client(**bad_transport, cfg, tc, incorrect_counter_computer(),
+                             std::move(*bad_spec));
+  if (!is_extra_key_mismatch(mismatch)) {
+    std::fprintf(stderr, "FAIL: mTLS incorrect Counter was not rejected\n");
+    return 1;
+  }
+  std::puts("PASS: mTLS incorrect Counter rejected with step_mismatch");
   return 0;
 }
 
@@ -543,6 +592,20 @@ int scenario_counter_replay_tcp(const char* bin) {
     return 1;
   }
   std::puts("PASS: Counter generate+replay over real TCP server mode");
+
+  auto bad_transport = connect_tcp("127.0.0.1", static_cast<std::uint16_t>(port));
+  auto bad_spec = spec_from_files(counter_spec_path());
+  if (!bad_transport || !bad_spec) {
+    std::fprintf(stderr, "FAIL: could not prepare TCP mismatch replay\n");
+    return 1;
+  }
+  auto mismatch = run_client(**bad_transport, cfg, tc, incorrect_counter_computer(),
+                             std::move(*bad_spec));
+  if (!is_extra_key_mismatch(mismatch)) {
+    std::fprintf(stderr, "FAIL: TCP incorrect Counter was not rejected\n");
+    return 1;
+  }
+  std::puts("PASS: TCP incorrect Counter rejected with step_mismatch");
   return 0;
 }
 
@@ -592,6 +655,18 @@ int scenario_async_jobs(const char* bin) {
   ApalacheSpec spec;
   spec.sources = hourclock_sources();
 
+  auto sync_conn = connect_tcp("127.0.0.1", static_cast<std::uint16_t>(port));
+  if (!sync_conn) {
+    std::fprintf(stderr, "FAIL: async: sync comparison connection failed\n");
+    return 1;
+  }
+  auto sync_verdict = run_client_validate(**sync_conn, cfg, /*bound=*/10, spec);
+  if (!sync_verdict) {
+    std::fprintf(stderr, "FAIL: async: sync comparison validate failed: %s\n",
+                 sync_verdict.error().message.c_str());
+    return 1;
+  }
+
   auto accepted = submit_validate_async(*conn, cfg, /*bound=*/10, spec);
   if (!accepted) {
     std::fprintf(stderr, "FAIL: submit_validate_async: %s\n",
@@ -628,10 +703,35 @@ int scenario_async_jobs(const char* bin) {
   }
   const auto& outcome = std::get<JobResult>(*done).outcome;
   if (!std::holds_alternative<SpecValidated>(outcome.value) ||
-      !std::get<SpecValidated>(outcome.value).is_valid()) {
-    std::fprintf(stderr, "FAIL: async: validate outcome not valid (C20)\n");
+      std::get<SpecValidated>(outcome.value).is_valid() != sync_verdict->valid) {
+    std::fprintf(stderr, "FAIL: async validate payload differs from sync verdict (C20)\n");
     return 1;
   }
+
+  // C23: submit two jobs and await in reverse order. Results must remain
+  // correlated by job id rather than arrival or completion order.
+  auto ordered_first = submit_validate_async(*conn, cfg, /*bound=*/10, spec);
+  auto ordered_second = submit_validate_async(*conn, cfg, /*bound=*/10, spec);
+  if (!ordered_first || !ordered_second) {
+    std::fprintf(stderr, "FAIL: async: ordered submissions failed\n");
+    return 1;
+  }
+  auto observer = connect_tcp("127.0.0.1", static_cast<std::uint16_t>(port));
+  if (!observer) {
+    std::fprintf(stderr, "FAIL: async: ordering observer failed\n");
+    return 1;
+  }
+  auto second_first = await_job(**observer, ordered_second->job_id);
+  auto first_second = await_job(**observer, ordered_first->job_id);
+  if (!second_first || !first_second ||
+      !std::holds_alternative<JobResult>(*second_first) ||
+      !std::holds_alternative<JobResult>(*first_second) ||
+      std::get<JobResult>(*second_first).job_id != ordered_second->job_id ||
+      std::get<JobResult>(*first_second).job_id != ordered_first->job_id) {
+    std::fprintf(stderr, "FAIL: async: reverse awaits lost job-id correlation (C23)\n");
+    return 1;
+  }
+  (void)(*observer)->close();
 
   // C19: submit a second job and cancel it; cancel must not error.
   auto accepted2 = submit_validate_async(*conn, cfg, /*bound=*/10, spec);
@@ -664,6 +764,7 @@ int main() {
   int failures = 0;
   failures += scenario_with_traces(bin);
   failures += scenario_counter_replay(bin);
+  failures += scenario_counter_mismatch(bin);
   failures += scenario_counter_replay_tcp(bin);
   failures += scenario_counter_replay_mtls(bin);
   failures += scenario_register(bin);

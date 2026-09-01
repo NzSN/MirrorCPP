@@ -250,6 +250,12 @@ TEST_CASE("tcp: embedded newline is rejected and nothing is written", "[transpor
   REQUIRE_FALSE(empty.has_value());
   REQUIRE(empty.error().kind == ErrorKind::io);
 
+  const std::string boundary(65535, 'x');
+  REQUIRE(tr.send_line(boundary).has_value());
+  const auto boundary_echo = tr.recv_line();
+  REQUIRE(boundary_echo.has_value());
+  REQUIRE(*boundary_echo == boundary);
+
   const auto huge = tr.send_line(std::string(65536, 'x'));
   REQUIRE_FALSE(huge.has_value());
   REQUIRE(huge.error().kind == ErrorKind::io);
