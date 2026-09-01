@@ -15,22 +15,6 @@ namespace mirrorcpp {
 
 using std::unexpected;
 
-namespace {
-
-// Framing invariant (design §5.3): send_line rejects embedded newlines. Nothing
-// is written on rejection. ErrorKind::io is used (a local transport-level
-// framing violation; the JSON encoder never produces embedded newlines).
-Result<void> reject_embedded_newline(std::string_view line) {
-  if (line.find('\n') != std::string_view::npos) {
-    return unexpected(Error(ErrorKind::io,
-                            "send_line: input contains an embedded newline (framing "
-                            "violation — the protocol is newline-delimited JSON)"));
-  }
-  return {};
-}
-
-} // namespace
-
 // ---------------------------------------------------------------------------
 // StdioTransport — the mirror runs as a child process.
 // ---------------------------------------------------------------------------
@@ -44,7 +28,7 @@ public:
   Result<void> start() { return proc_.spawn(bin_.string()); }
 
   Result<void> send_line(std::string_view line) override {
-    auto r = reject_embedded_newline(line);
+    auto r = detail::reject_embedded_newline(line);
     if (!r) return r;
     std::string framed(line);
     framed.push_back('\n');
@@ -98,7 +82,7 @@ public:
 
   Result<void> send_line(std::string_view line) override {
     if (closed_) return unexpected(Error(ErrorKind::io, "send_line on closed transport"));
-    auto r = reject_embedded_newline(line);
+    auto r = detail::reject_embedded_newline(line);
     if (!r) return r;
     std::string framed(line);
     framed.push_back('\n');
@@ -109,6 +93,8 @@ public:
     if (closed_) return unexpected(Error(ErrorKind::io, "recv_line on closed transport"));
     return sock_.read_line();
   }
+
+  bool async_capable() const noexcept override { return true; }  // server mode (guide §6)
 
   Result<long> close() override {
     if (closed_) return 0;
@@ -143,4 +129,3 @@ Result<std::unique_ptr<Transport>> connect_tcp(std::string_view host, std::uint1
 }
 
 } // namespace mirrorcpp
-

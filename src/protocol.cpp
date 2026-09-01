@@ -105,9 +105,16 @@ DiffHintKind diff_hint_kind_from_string(std::string_view s) {
 }
 
 PathSeg decode_path_seg(const nlohmann::json& j) {
-  if (j.is_string()) return PathSeg::field(j.get<std::string>());
-  if (j.is_number_integer() || j.is_number_unsigned()) return PathSeg::index(j.get<std::int64_t>());
-  throw JsonError("diff hint path segment must be a field name or index");
+  // Wire shape (pinned by the golden corpus): tagged objects
+  // {"field": name} | {"index": n}.
+  if (j.is_object()) {
+    if (auto it = j.find("field"); it != j.end() && it->is_string())
+      return PathSeg::field(it->get<std::string>());
+    if (auto it = j.find("index");
+        it != j.end() && (it->is_number_integer() || it->is_number_unsigned()))
+      return PathSeg::index(it->get<std::int64_t>());
+  }
+  throw JsonError("diff hint path segment must be {\"field\": name} or {\"index\": n}");
 }
 
 DiffHint decode_diff_hint(const nlohmann::json& j) {
@@ -133,14 +140,19 @@ State decode_state_field(const nlohmann::json& j, std::string_view key) {
   return decode_state(*it);
 }
 
-SpecValidated decode_spec_validated(const nlohmann::json& j) {
-  require_object(j, "spec_validated");
-  const nlohmann::json& result = j.at("result");
+// A ValidateResult payload ("valid" | {"invalid": text}) — shared by
+// spec_validated.result and the async job_result outcome.validate (C20).
+SpecValidated decode_validate_result(const nlohmann::json& result) {
   if (result.is_string() && result.get<std::string>() == "valid")
     return SpecValidated{std::monostate{}};
   if (result.is_object() && result.contains("invalid") && result.at("invalid").is_string())
     return SpecValidated{result.at("invalid").get<std::string>()};
-  throw JsonError("spec_validated.result: expected \"valid\" or {\"invalid\": text}");
+  throw JsonError("validate result: expected \"valid\" or {\"invalid\": text}");
+}
+
+SpecValidated decode_spec_validated(const nlohmann::json& j) {
+  require_object(j, "spec_validated");
+  return decode_validate_result(j.at("result"));
 }
 
 StepMismatch decode_step_mismatch(const nlohmann::json& j) {
@@ -155,14 +167,55 @@ StepMismatch decode_step_mismatch(const nlohmann::json& j) {
   return m;
 }
 
-GenTracesDone decode_gen_traces_done(const nlohmann::json& j) {
-  require_object(j, "gen_traces_done");
+// A genTraces payload ({itfTracePaths, itfTraces?}) — shared by
+// gen_traces_done and the async job_result outcome.genTraces.
+GenTracesDone decode_gen_traces_payload(const nlohmann::json& j) {
   GenTracesDone g;
-  g.itf_trace_paths = require_string_array(j.at("itfTracePaths"), "gen_traces_done.itfTracePaths");
+  g.itf_trace_paths = require_string_array(j.at("itfTracePaths"), "genTraces.itfTracePaths");
   if (auto it = j.find("itfTraces"); it != j.end() && it->is_array()) {
     g.itf_traces = *it;    // inline ITF JSON contents, kept as raw JSON
   }
   return g;
+}
+
+GenTracesDone decode_gen_traces_done(const nlohmann::json& j) {
+  require_object(j, "gen_traces_done");
+  return decode_gen_traces_payload(j);
+}
+
+// ---------------------------------------------------------------------------
+// Async job reply decode (guide §6; wire shapes pinned by the golden corpus)
+// ---------------------------------------------------------------------------
+
+JobKind decode_job_kind(const nlohmann::json& j) {
+  const std::string s = require_string(j, "kind");
+  if (s == "validate") return JobKind::validate;
+  if (s == "gen_traces") return JobKind::gen_traces;
+  throw JsonError("kind: expected validate/gen_traces");
+}
+
+JobPhase decode_job_phase(const nlohmann::json& j) {
+  const std::string s = require_string(j, "phase");
+  if (s == "pending") return JobPhase::pending;
+  if (s == "running") return JobPhase::running;
+  if (s == "done") return JobPhase::done;
+  if (s == "failed") return JobPhase::failed;
+  if (s == "cancelled") return JobPhase::cancelled;
+  if (s == "unknown") return JobPhase::unknown;
+  throw JsonError("phase: expected pending/running/done/failed/cancelled/unknown");
+}
+
+JobOutcome decode_job_outcome(const nlohmann::json& j) {
+  require_object(j, "job_result.outcome");
+  if (auto it = j.find("validate"); it != j.end())
+    return JobOutcome{decode_validate_result(*it)};
+  if (auto it = j.find("genTraces"); it != j.end()) {
+    require_object(*it, "job_result.outcome.genTraces");
+    return JobOutcome{decode_gen_traces_payload(*it)};
+  }
+  if (auto it = j.find("error"); it != j.end())
+    return JobOutcome{require_string(*it, "job_result.outcome.error")};
+  throw JsonError("job_result.outcome: expected validate/genTraces/error");
 }
 
 TransitionStatus decode_transition_status(const nlohmann::json& j) {
@@ -196,6 +249,11 @@ std::string_view client_message_name(const ClientMessage& msg) noexcept {
     else if constexpr (std::is_same_v<T, RegisterExplore>) return "register_explore";
     else if constexpr (std::is_same_v<T, RegisterExploreSession>) return "register_explore_session";
     else if constexpr (std::is_same_v<T, RegisterValidate>) return "register_validate";
+    else if constexpr (std::is_same_v<T, RegisterValidateAsync>) return "register_validate_async";
+    else if constexpr (std::is_same_v<T, RegisterTraceGenAsync>) return "register_trace_gen_async";
+    else if constexpr (std::is_same_v<T, QueryJob>) return "query_job";
+    else if constexpr (std::is_same_v<T, AwaitJob>) return "await_job";
+    else if constexpr (std::is_same_v<T, CancelJob>) return "cancel_job";
     else if constexpr (std::is_same_v<T, ExploreAssumeTransition>) return "explore_assume_transition";
     else if constexpr (std::is_same_v<T, ExploreNextStep>) return "explore_next_step";
     else if constexpr (std::is_same_v<T, ExploreQueryState>) return "explore_query_state";
@@ -226,6 +284,9 @@ std::string_view mirror_message_name(const MirrorMessage& msg) noexcept {
     else if constexpr (std::is_same_v<T, ExploreState>) return "explore_state";
     else if constexpr (std::is_same_v<T, ExploreInvariantStatus>) return "explore_invariant_status";
     else if constexpr (std::is_same_v<T, ExploreAssumeStatus>) return "explore_assume_status";
+    else if constexpr (std::is_same_v<T, JobAccepted>) return "job_accepted";
+    else if constexpr (std::is_same_v<T, JobStatus>) return "job_status";
+    else if constexpr (std::is_same_v<T, JobResult>) return "job_result";
     else return "explore_rollback_done";
   }, msg);
 }
@@ -323,6 +384,22 @@ std::string encode_client_message(const ClientMessage& msg) {
       j["apalacheConfig"] = encode_apalache_config(m.cfg);
       j["bound"] = m.bound;
       if (m.spec) j["spec"] = encode_spec(*m.spec);
+    } else if constexpr (std::is_same_v<T, RegisterValidateAsync>) {
+      j["apalacheConfig"] = encode_apalache_config(m.cfg);
+      j["bound"] = m.bound;
+      if (m.spec) j["spec"] = encode_spec(*m.spec);
+    } else if constexpr (std::is_same_v<T, RegisterTraceGenAsync>) {
+      j["apalacheConfig"] = encode_apalache_config(m.cfg);
+      j["traceConfig"] = encode_trace_config(m.tc);
+      if (m.dest_path) j["destPath"] = *m.dest_path;
+      if (m.spec) j["spec"] = encode_spec(*m.spec);
+    } else if constexpr (std::is_same_v<T, QueryJob>) {
+      j["jobId"] = m.job_id;
+    } else if constexpr (std::is_same_v<T, AwaitJob>) {
+      j["jobId"] = m.job_id;
+      if (m.timeout_secs) j["timeoutSecs"] = *m.timeout_secs;
+    } else if constexpr (std::is_same_v<T, CancelJob>) {
+      j["jobId"] = m.job_id;
     } else if constexpr (std::is_same_v<T, ExploreAssumeTransition>) {
       j["transitionId"] = m.transition_id;
     } else if constexpr (std::is_same_v<T, ExploreNextStep>) {
@@ -413,6 +490,21 @@ Result<MirrorMessage> decode_mirror_message(std::string_view line) {
       require_object(j, "explore_rollback_done");
       return MirrorMessage{ExploreRollbackDone{require_int(j.at("snapshotId"), "snapshotId")}};
     }
+    if (tag == "job_accepted") {
+      require_object(j, "job_accepted");
+      return MirrorMessage{JobAccepted{require_string(j.at("jobId"), "jobId"),
+                                       decode_job_kind(j.at("kind"))}};
+    }
+    if (tag == "job_status") {
+      require_object(j, "job_status");
+      return MirrorMessage{JobStatus{require_string(j.at("jobId"), "jobId"),
+                                     decode_job_phase(j.at("phase"))}};
+    }
+    if (tag == "job_result") {
+      require_object(j, "job_result");
+      return MirrorMessage{JobResult{require_string(j.at("jobId"), "jobId"),
+                                     decode_job_outcome(j.at("outcome"))}};
+    }
     // Unknown tag: forward-compatible (§3.3 / §5.2).
     return MirrorMessage{ProtocolError{"unknown proto_step: " + tag}};
   } catch (const JsonError& e) {
@@ -443,7 +535,7 @@ namespace {
 // Expected incoming message tags for a phase (used for "expected X, got Y").
 const char* expected_tags(Phase p) noexcept {
   switch (p) {
-    case Phase::idle:       return "Register*";
+    case Phase::idle:       return "Register* | register_*_async | query_job | await_job | cancel_job";
     case Phase::validating: return "spec_validated | gen_traces_done";
     case Phase::ready:      return "initial_state";
     case Phase::stepping:   return "next_step | step_ok | all_steps_done | step_mismatch";
@@ -466,6 +558,24 @@ Result<void> PhaseGuard::sent(const ClientMessage& msg) {
       return err_protocol(std::string("cannot send ") + std::string(tag)
                         + " in phase " + phase_name(phase_));
     phase_ = (tag == "register_explore_session") ? Phase::exploring : Phase::validating;
+    return {};
+  }
+  // Async job submissions (guide §6): the reply (job_accepted | register_error)
+  // is synchronous and the job lives server-side, so this is NOT a flow — the
+  // session stays idle and may submit more jobs or start a sync flow.
+  if (tag == "register_validate_async" || tag == "register_trace_gen_async") {
+    if (phase_ != Phase::idle)
+      return err_protocol(std::string("cannot send ") + std::string(tag)
+                        + " in phase " + phase_name(phase_));
+    return {};
+  }
+  // Job control is phase-independent on the wire but MUST NOT be interleaved
+  // with a live sync/explore flow on the same connection (the server would
+  // reject it out-of-phase); idle and done are the quiescent phases.
+  if (tag == "query_job" || tag == "await_job" || tag == "cancel_job") {
+    if (phase_ != Phase::idle && phase_ != Phase::done)
+      return err_protocol(std::string("cannot send ") + std::string(tag)
+                        + " in phase " + phase_name(phase_));
     return {};
   }
   // Non-register client messages: allowed only in their flow phase.
@@ -499,7 +609,11 @@ Result<void> PhaseGuard::received(const MirrorMessage& msg) {
       phase_ = Phase::done;
       return true;
     } else if constexpr (std::is_same_v<T, InitialState>) {
-      if (phase_ != Phase::ready) return false;
+      // ready (first trace) OR stepping (the mirror starts the NEXT trace
+      // directly — all_steps_done comes once, at the very end of the flow;
+      // verified against the real mirror, which replays multiple traces per
+      // register run).
+      if (phase_ != Phase::ready && phase_ != Phase::stepping) return false;
       phase_ = Phase::stepping;
       return true;
     } else if constexpr (std::is_same_v<T, NextStep> || std::is_same_v<T, StepOk>) {
@@ -521,6 +635,11 @@ Result<void> PhaseGuard::received(const MirrorMessage& msg) {
       if (phase_ != Phase::exploring) return false;
       phase_ = Phase::done;
       return true;
+    } else if constexpr (std::is_same_v<T, JobAccepted> ||
+                         std::is_same_v<T, JobStatus> ||
+                         std::is_same_v<T, JobResult>) {
+      // Async job replies arrive only in the quiescent phases (see sent()).
+      return phase_ == Phase::idle || phase_ == Phase::done;
     } else {
       return false;
     }

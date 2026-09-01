@@ -91,16 +91,21 @@ std::string discovery_url(std::string_view registry_url) {
 Result<std::vector<MirrorServiceInfo>> discover_mirrors(std::string_view registry_url,
                                                         RegistryOptions options) {
   // Fail closed (design 3.6/5.4): every failure path returns an EMPTY list.
-  const std::vector<MirrorServiceInfo> empty;
   const auto body = detail::http_get(discovery_url(registry_url), options.timeout);
-  if (!body) return empty;
+  if (!body) return std::vector<MirrorServiceInfo>{};
+  return detail::parse_registry_entries(*body);
+}
+
+namespace detail {
+
+std::vector<MirrorServiceInfo> parse_registry_entries(std::string_view body) {
   nlohmann::json doc;
   try {
-    doc = nlohmann::json::parse(*body);
+    doc = nlohmann::json::parse(body);
   } catch (const nlohmann::json::exception&) {
-    return empty;
+    return {};
   }
-  if (!doc.is_array()) return empty; // Consul answers with an array of entries
+  if (!doc.is_array()) return {}; // Consul answers with an array of entries
   std::vector<MirrorServiceInfo> out;
   out.reserve(doc.size());
   for (const auto& entry : doc) {
@@ -109,6 +114,8 @@ Result<std::vector<MirrorServiceInfo>> discover_mirrors(std::string_view registr
   }
   return out;
 }
+
+} // namespace detail
 
 Result<std::unique_ptr<TlsTransport>> connect_from_registry(
     std::string_view registry_url, const TlsOptions& tls,

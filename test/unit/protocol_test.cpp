@@ -345,7 +345,9 @@ TEST_CASE("decode bad status returns Error{json}") {
 // ===========================================================================
 
 TEST_CASE("decode diff hint value_mismatch with path + values") {
-  auto m = must_decode(R"({"proto_step":"step_mismatch","expected":{},"actual":{},"hints":[{"path":["hr",0,"salary"],"kind":"value_mismatch","expected":{"#bigint":"5"},"actual":{"#bigint":"6"}}]})");
+  // Path segments are tagged objects on the wire (golden corpus shape):
+  // {"field": name} | {"index": n}.
+  auto m = must_decode(R"({"proto_step":"step_mismatch","expected":{},"actual":{},"hints":[{"path":[{"field":"hr"},{"index":0},{"field":"salary"}],"kind":"value_mismatch","expected":{"#bigint":"5"},"actual":{"#bigint":"6"}}]})");
   const StepMismatch& sm = std::get<StepMismatch>(m);
   REQUIRE(sm.hints.size() == 1);
   const DiffHint& h = sm.hints[0];
@@ -363,7 +365,7 @@ TEST_CASE("decode diff hint value_mismatch with path + values") {
 TEST_CASE("decode all diff hint kinds") {
   const char* kinds[] = { "value_mismatch", "missing", "extra", "missing_elem", "extra_elem", "type_mismatch", "truncated" };
   for (const char* k : kinds) {
-    const std::string line = std::string(R"({"proto_step":"step_mismatch","expected":{},"actual":{},"hints":[{"path":["a"],"kind":")") + k + R"("}]})";
+    const std::string line = std::string(R"({"proto_step":"step_mismatch","expected":{},"actual":{},"hints":[{"path":[{"field":"a"}],"kind":")") + k + R"("}]})";
     auto m = must_decode(line);
     REQUIRE(std::get<StepMismatch>(m).hints.size() == 1);
   }
@@ -553,6 +555,133 @@ TEST_CASE("phase_name returns readable names") {
   REQUIRE(std::string(phase_name(Phase::stepping)) == "stepping");
   REQUIRE(std::string(phase_name(Phase::exploring)) == "exploring");
   REQUIRE(std::string(phase_name(Phase::done)) == "done");
+}
+
+// ===========================================================================
+// Async job interface (guide §6)
+// ===========================================================================
+
+TEST_CASE("async: register_validate_async encodes corpus shape") {
+  ApalacheConfig cfg;
+  cfg.spec_path = "s.tla";
+  cfg.invariant = "Inv";
+  const nlohmann::json j = parse(enc(ClientMessage{ RegisterValidateAsync{cfg, 5, std::nullopt} }));
+  REQUIRE(j["proto_step"] == "register_validate_async");
+  REQUIRE(j["bound"] == 5);
+  REQUIRE(j["apalacheConfig"]["specPath"] == "s.tla");
+  REQUIRE_FALSE(j.contains("spec"));        // absent optionals omitted (C14)
+  REQUIRE_FALSE(j["apalacheConfig"].contains("constInit"));
+}
+
+TEST_CASE("async: register_trace_gen_async encodes corpus shape") {
+  ApalacheConfig cfg;
+  cfg.spec_path = "s.tla";
+  cfg.invariant = "Inv";
+  cfg.length_bound = 3;
+  TraceGenerationConfig tc;
+  tc.num_traces = 2;
+  const nlohmann::json j = parse(
+      enc(ClientMessage{ RegisterTraceGenAsync{cfg, tc, std::nullopt, std::nullopt} }));
+  REQUIRE(j["proto_step"] == "register_trace_gen_async");
+  REQUIRE(j["traceConfig"]["numTraces"] == 2);
+  REQUIRE_FALSE(j.contains("destPath"));
+  REQUIRE_FALSE(j.contains("spec"));
+}
+
+TEST_CASE("async: job control messages encode corpus shape") {
+  REQUIRE(parse(enc(ClientMessage{ QueryJob{ "job-7f3a" } }))
+          == parse(R"({"proto_step":"query_job","jobId":"job-7f3a"})"));
+  REQUIRE(parse(enc(ClientMessage{ AwaitJob{ "job-7f3a", 30 } }))
+          == parse(R"({"proto_step":"await_job","jobId":"job-7f3a","timeoutSecs":30})"));
+  REQUIRE(parse(enc(ClientMessage{ AwaitJob{ "job-7f3a", std::nullopt } }))
+          == parse(R"({"proto_step":"await_job","jobId":"job-7f3a"})"));
+  REQUIRE(parse(enc(ClientMessage{ CancelJob{ "job-7f3a" } }))
+          == parse(R"({"proto_step":"cancel_job","jobId":"job-7f3a"})"));
+}
+
+TEST_CASE("async: job_accepted decodes both kinds") {
+  {
+    auto m = must_decode(R"({"proto_step":"job_accepted","jobId":"job-7f3a","kind":"validate"})");
+    const auto& ja = std::get<JobAccepted>(m);
+    REQUIRE(ja.job_id == "job-7f3a");
+    REQUIRE(ja.kind == JobKind::validate);
+  }
+  {
+    auto m = must_decode(R"({"proto_step":"job_accepted","jobId":"job-9","kind":"gen_traces"})");
+    REQUIRE(std::get<JobAccepted>(m).kind == JobKind::gen_traces);
+  }
+}
+
+TEST_CASE("async: job_status decodes every phase incl. unknown (C21)") {
+  const std::pair<const char*, JobPhase> phases[] = {
+      {"pending", JobPhase::pending},     {"running", JobPhase::running},
+      {"done", JobPhase::done},           {"failed", JobPhase::failed},
+      {"cancelled", JobPhase::cancelled}, {"unknown", JobPhase::unknown},
+  };
+  for (const auto& [tag, phase] : phases) {
+    const std::string line =
+        std::string(R"({"proto_step":"job_status","jobId":"j","phase":")") + tag + "\"}";
+    auto m = must_decode(line);
+    REQUIRE(std::get<JobStatus>(m).phase == phase);
+  }
+}
+
+TEST_CASE("async: job_result decodes all three outcome alternatives") {
+  {
+    auto m = must_decode(R"({"proto_step":"job_result","jobId":"j","outcome":{"validate":"valid"}})");
+    const auto& jr = std::get<JobResult>(m);
+    const auto& sv = std::get<SpecValidated>(jr.outcome.value);
+    REQUIRE(sv.is_valid());
+  }
+  {
+    auto m = must_decode(
+        R"({"proto_step":"job_result","jobId":"j","outcome":{"validate":{"invalid":"boom"}}})");
+    const auto& sv = std::get<SpecValidated>(std::get<JobResult>(m).outcome.value);
+    REQUIRE_FALSE(sv.is_valid());
+    REQUIRE(*sv.invalid_text() == "boom");
+  }
+  {
+    auto m = must_decode(
+        R"({"proto_step":"job_result","jobId":"j","outcome":{"genTraces":{"itfTracePaths":["t1.itf.json"],"itfTraces":[]}}})");
+    const auto& gt = std::get<GenTracesDone>(std::get<JobResult>(m).outcome.value);
+    REQUIRE(gt.itf_trace_paths == std::vector<std::string>{ "t1.itf.json" });
+  }
+  {
+    // infraError (guide §9): NOT a spec verdict; retryable.
+    auto m = must_decode(R"({"proto_step":"job_result","jobId":"j","outcome":{"error":"worker died"}})");
+    REQUIRE(std::get<std::string>(std::get<JobResult>(m).outcome.value) == "worker died");
+  }
+}
+
+TEST_CASE("phase guard: async submit stays idle, job control legal in idle/done only") {
+  PhaseGuard g;
+  REQUIRE(g.sent(ClientMessage{ RegisterValidateAsync{} }).has_value());
+  REQUIRE(g.phase() == Phase::idle);   // async submit is NOT a flow
+  REQUIRE(g.received(MirrorMessage{ JobAccepted{ "j", JobKind::validate } }).has_value());
+  REQUIRE(g.phase() == Phase::idle);
+  REQUIRE(g.sent(ClientMessage{ QueryJob{ "j" } }).has_value());
+  REQUIRE(g.received(MirrorMessage{ JobStatus{ "j", JobPhase::running } }).has_value());
+  REQUIRE(g.sent(ClientMessage{ AwaitJob{ "j", 5 } }).has_value());
+  REQUIRE(g.received(MirrorMessage{ JobResult{ "j", JobOutcome{SpecValidated{std::monostate{}}} } }).has_value());
+
+  // Job control is also legal after a finished sync flow (done)…
+  PhaseGuard g2;
+  REQUIRE(g2.sent(ClientMessage{ RegisterValidate{} }).has_value());
+  REQUIRE(g2.received(MirrorMessage{ SpecValidated{ std::monostate{} } }).has_value());
+  REQUIRE(g2.phase() == Phase::ready);
+  // …but not mid-flow:
+  REQUIRE_FALSE(g2.sent(ClientMessage{ QueryJob{ "j" } }).has_value());
+  REQUIRE_FALSE(g2.received(MirrorMessage{ JobStatus{ "j", JobPhase::running } }).has_value());
+
+  // …and not during an explore session.
+  PhaseGuard g3;
+  REQUIRE(g3.sent(ClientMessage{ RegisterExploreSession{} }).has_value());
+  REQUIRE_FALSE(g3.sent(ClientMessage{ CancelJob{ "j" } }).has_value());
+
+  // Async submit mid-flow is rejected too.
+  PhaseGuard g4;
+  REQUIRE(g4.sent(ClientMessage{ Register{} }).has_value());
+  REQUIRE_FALSE(g4.sent(ClientMessage{ RegisterTraceGenAsync{} }).has_value());
 }
 
 // ===========================================================================

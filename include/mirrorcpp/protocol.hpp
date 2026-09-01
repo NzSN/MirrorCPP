@@ -30,6 +30,12 @@ namespace mirrorcpp {
 enum class TransitionStatus { enabled, disabled, unknown };
 enum class InvariantStatus { satisfied, violated, unknown };
 
+// Async job interface (guide §6). JobKind pins job_accepted.kind; JobPhase
+// pins job_status.phase (including "unknown" — answered exactly for
+// never-submitted or evicted ids, C21).
+enum class JobKind { validate, gen_traces };
+enum class JobPhase { pending, running, done, failed, cancelled, unknown };
+
 // ---------------------------------------------------------------------------
 // Config + spec structs (§5.2)
 // ---------------------------------------------------------------------------
@@ -79,7 +85,8 @@ struct PathSeg {
 
 // Completes the forward declaration in error.hpp. Wire shape:
 // {"path": [...], "kind": "value_mismatch", "expected"?: …, "actual"?: …}.
-// The `truncated` kind is a bare {"kind": "truncated"} marker.
+// Path segments are tagged objects: {"field": name} | {"index": n} (golden
+// corpus shape). The `truncated` kind is a bare {"kind": "truncated"} marker.
 struct DiffHint {
   DiffHintKind kind;
   std::vector<PathSeg> path;
@@ -113,7 +120,9 @@ struct RegisterExplore {
   ApalacheSpec spec;
   std::vector<std::string> invariants;
   std::vector<std::string> exports;
-  std::optional<long long> max_steps;   // wire: maxSteps? (omitted = mirror default)
+  std::optional<long long> max_steps;   // wire: maxSteps; optional in the struct,
+                                        // but the Lean mirror REQUIRES it (reqNat) —
+                                        // run_client_explore always sends it
   bool operator==(const RegisterExplore&) const = default;
 };
 struct RegisterExploreSession {
@@ -128,6 +137,31 @@ struct RegisterValidate {
   std::optional<ApalacheSpec> spec;
   bool operator==(const RegisterValidate&) const = default;
 };
+
+// Async job submissions + job control (guide §6; server-mode transports only —
+// the mirror rejects these on stdio with register_error). job_id is a plain
+// string: jobIds are process-unique and cross-connection visible (C17), so a
+// job submitted on one connection may be queried/awaited/cancelled on another.
+struct RegisterValidateAsync {
+  ApalacheConfig cfg;
+  long long bound;
+  std::optional<ApalacheSpec> spec;
+  bool operator==(const RegisterValidateAsync&) const = default;
+};
+struct RegisterTraceGenAsync {
+  ApalacheConfig cfg;
+  TraceGenerationConfig tc;
+  std::optional<std::string> dest_path;
+  std::optional<ApalacheSpec> spec;
+  bool operator==(const RegisterTraceGenAsync&) const = default;
+};
+struct QueryJob { std::string job_id; bool operator==(const QueryJob&) const = default; };
+struct AwaitJob {
+  std::string job_id;
+  std::optional<long long> timeout_secs;   // omitted on the wire when absent
+  bool operator==(const AwaitJob&) const = default;
+};
+struct CancelJob { std::string job_id; bool operator==(const CancelJob&) const = default; };
 struct ExploreAssumeTransition { long long transition_id; bool operator==(const ExploreAssumeTransition&) const = default; };
 struct ExploreNextStep { bool operator==(const ExploreNextStep&) const = default; };
 struct ExploreQueryState { bool operator==(const ExploreQueryState&) const = default; };
@@ -139,7 +173,9 @@ struct ReportState { State state; bool operator==(const ReportState&) const = de
 
 using ClientMessage = std::variant<
     Register, RegisterTraces, RegisterTraceGen, RegisterExplore,
-    RegisterExploreSession, RegisterValidate, ExploreAssumeTransition,
+    RegisterExploreSession, RegisterValidate, RegisterValidateAsync,
+    RegisterTraceGenAsync, QueryJob, AwaitJob, CancelJob,
+    ExploreAssumeTransition,
     ExploreNextStep, ExploreQueryState, ExploreCheckInvariant,
     ExploreAssumeState, ExploreRollback, ExploreDone, ReportState>;
 
@@ -179,12 +215,30 @@ struct ExploreInvariantStatus { InvariantStatus status; bool operator==(const Ex
 struct ExploreAssumeStatus { TransitionStatus status; bool operator==(const ExploreAssumeStatus&) const = default; };
 struct ExploreRollbackDone { long long snapshot_id; bool operator==(const ExploreRollbackDone&) const = default; };
 
+// Async job replies (guide §6).
+struct JobAccepted { std::string job_id; JobKind kind; bool operator==(const JobAccepted&) const = default; };
+struct JobStatus {
+  std::string job_id;
+  JobPhase phase;   // JobPhase::unknown = never submitted or evicted (C21)
+  bool operator==(const JobStatus&) const = default;
+};
+// A terminal job outcome. validate reuses SpecValidated (C20: the payload is
+// identical to the sync register_validate answer — clients MAY share result
+// handling); gen_traces reuses GenTracesDone; the string alternative is an
+// infraError (guide §9: apalache died without output — NOT a spec verdict,
+// retryable).
+struct JobOutcome {
+  std::variant<SpecValidated, GenTracesDone, std::string> value;
+  bool operator==(const JobOutcome&) const = default;
+};
+struct JobResult { std::string job_id; JobOutcome outcome; bool operator==(const JobResult&) const = default; };
+
 using MirrorMessage = std::variant<
     SpecValidated, InitialState, NextStep, StepOk, AllStepsDone,
     ExploreSessionDone, StepMismatch, GenTracesDone, RegisterError,
     ProtocolError, ExplorerReady, ExploreTransitionStatus, ExploreStepDone,
     ExploreState, ExploreInvariantStatus, ExploreAssumeStatus,
-    ExploreRollbackDone>;
+    ExploreRollbackDone, JobAccepted, JobStatus, JobResult>;
 
 // ---------------------------------------------------------------------------
 // Tag names (proto_step discriminants) — used by errors and the phase guard.
@@ -213,8 +267,13 @@ std::string render_diff_hints(const std::vector<DiffHint>& hints);
 // ---------------------------------------------------------------------------
 // Phase guard (§5.2): idle --Register*--> validating --spec_validated--> ready
 //   --initial_state--> stepping ⇄ (next_step/report_state/step_ok)
+//   stepping --initial_state--> stepping  (the next trace starts directly;
+//                                          all_steps_done comes once, at the end)
 //   stepping --all_steps_done | step_mismatch--> done
 //   idle --register_explore_session--> exploring --explore_done--> done
+// Async job messages (guide §6) are NOT flows: register_*_async stays in idle
+// (the job lives server-side), and query_job/await_job/cancel_job are legal in
+// the quiescent phases (idle, done) only — never interleaved with a live flow.
 // ---------------------------------------------------------------------------
 enum class Phase { idle, validating, ready, stepping, exploring, done };
 

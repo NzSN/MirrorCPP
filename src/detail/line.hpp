@@ -31,6 +31,8 @@ using std::unexpected;
 
 // max_read is the chunk size per underlying read() call.
 inline constexpr std::size_t kLineChunkSize = 4096;
+// A payload plus its trailing LF fits in one 64 KiB protocol record.
+inline constexpr std::size_t kMaxProtocolLineBytes = 65535;
 
 inline Result<std::string> read_line_from_fd(long fd, std::string& buf,
                                              const char* unexpected_eof_msg) {
@@ -64,15 +66,22 @@ inline Result<std::string> read_line_from_fd(long fd, std::string& buf,
   }
 }
 
-// Framing invariant (design §5.3): Transport::send_line rejects inputs containing
-// an embedded newline (defensive — the JSON encoder never produces them). Nothing
-// is written on rejection. ErrorKind::io is used (a local transport-level framing
-// violation). Shared by all transports (stdio/TCP/TLS).
+// Framing invariants (guide C1/C2): reject blank, embedded-LF, and oversized
+// UTF-8 payloads before writing anything. std::string::size() is the byte count.
+// Shared by all transports (stdio/TCP/TLS).
 inline Result<void> reject_embedded_newline(std::string_view line) {
+  if (line.empty()) {
+    return unexpected(Error(ErrorKind::io, "send_line: protocol line must not be empty"));
+  }
   if (line.find('\n') != std::string_view::npos) {
     return unexpected(Error(ErrorKind::io,
                             "send_line: input contains an embedded newline (framing "
                             "violation — the protocol is newline-delimited JSON)"));
+  }
+  if (line.size() > kMaxProtocolLineBytes) {
+    return unexpected(Error(
+        ErrorKind::io,
+        "send_line: protocol line exceeds 65535-byte UTF-8 payload limit"));
   }
   return {};
 }

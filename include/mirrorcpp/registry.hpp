@@ -54,6 +54,18 @@ Result<std::unique_ptr<TlsTransport>> connect_from_registry(
     std::optional<std::string> pin_override = std::nullopt,
     RegistryOptions options = {});
 
+namespace detail {
+
+// Parse a Consul health-response BODY (the JSON text of
+// /v1/health/service/modelmirrors?passing=true) into candidate entries with
+// the same total-function discipline as discover_mirrors: a non-array body
+// yields an empty list (fail closed) and malformed entries are skipped.
+// Exposed for tests (golden consul_payloads.jsonl replay); discover_mirrors
+// is the public entry point.
+std::vector<MirrorServiceInfo> parse_registry_entries(std::string_view body);
+
+} // namespace detail
+
 } // namespace mirrorcpp
 
 #endif

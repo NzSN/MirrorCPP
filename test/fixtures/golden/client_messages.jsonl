@@ -1,0 +1,24 @@
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"proto_step":"register","spec":{"sources":["---- MODULE HourClock ----\n----"]},"traceConfig":{"numTraces":3,"view":"view"}}
+{"apalacheConfig":{"constInit":null,"initPredicate":null,"invariant":"","lengthBound":10,"nextPredicate":null,"paramVars":"","specPath":"HourClock.tla"},"proto_step":"register","spec":null,"traceConfig":{"numTraces":3,"view":"view"}}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"itfTracePaths":["out/itf/trace1.itf.json","out/itf/trace2.itf.json"],"proto_step":"register_traces"}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"destPath":"out/itf","proto_step":"register_trace_gen","spec":{"sources":["---- MODULE HourClock ----\n----"]},"traceConfig":{"numTraces":3,"view":"view"}}
+{"apalacheConfig":{"constInit":null,"initPredicate":null,"invariant":"","lengthBound":10,"nextPredicate":null,"paramVars":"","specPath":"HourClock.tla"},"destPath":null,"proto_step":"register_trace_gen","spec":null,"traceConfig":{"numTraces":3,"view":"view"}}
+{"exports":["Export"],"invariants":["Inv"],"maxSteps":25,"proto_step":"register_explore","spec":{"sources":["---- MODULE HourClock ----\n----"]}}
+{"exports":[],"invariants":["InvA","InvB"],"proto_step":"register_explore_session","spec":{"sources":["---- MODULE HourClock ----\n----"]}}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"bound":10,"proto_step":"register_validate","spec":{"sources":["---- MODULE HourClock ----\n----"]}}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"bound":100,"proto_step":"register_validate"}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"bound":5,"proto_step":"register_validate_async","spec":{"sources":["---- MODULE HourClock ----\n----"]}}
+{"apalacheConfig":{"constInit":null,"initPredicate":"Init","invariant":"Inv","lengthBound":10,"nextPredicate":"Next","paramVars":"p","specPath":"specs/HourClock.tla"},"destPath":"out/itf","proto_step":"register_trace_gen_async","spec":{"sources":["---- MODULE HourClock ----\n----"]},"traceConfig":{"numTraces":3,"view":"view"}}
+{"jobId":"job-7f3a","proto_step":"query_job"}
+{"jobId":"job-7f3a","proto_step":"await_job","timeoutSecs":30}
+{"jobId":"job-7f3a","proto_step":"await_job"}
+{"jobId":"job-7f3a","proto_step":"cancel_job"}
+{"proto_step":"explore_assume_transition","transitionId":2}
+{"proto_step":"explore_next_step"}
+{"proto_step":"explore_query_state"}
+{"invariantId":1,"proto_step":"explore_check_invariant"}
+{"proto_step":"explore_assume_state","state":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null}}
+{"proto_step":"explore_rollback","snapshotId":3}
+{"proto_step":"explore_done"}
+{"proto_step":"report_state","state":{"action_taken":"Init","h":{"#bigint":"0"}}}
+{"proto_step":"report_state","state":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null}}

@@ -50,6 +50,16 @@ TEST_CASE("INSTANCE ... WITH resolves the first token as module name", "[spec]")
   CHECK(spec->sources[1].starts_with("---- MODULE InstDep ----"));
 }
 
+TEST_CASE("continued EXTENDS and embedded INSTANCE forms resolve outside comments and strings", "[spec]") {
+  auto spec = mirrorcpp::spec_from_files(tla("advanced/AdvancedRoot.tla"));
+  REQUIRE(spec.has_value());
+  REQUIRE(spec->sources.size() == 4);
+  CHECK(spec->sources[0].starts_with("---- MODULE AdvancedRoot ----"));
+  CHECK(spec->sources[1].starts_with("---- MODULE AdvA ----"));
+  CHECK(spec->sources[2].starts_with("---- MODULE AdvB ----"));
+  CHECK(spec->sources[3].starts_with("---- MODULE AdvC ----"));
+}
+
 TEST_CASE("missing module is a spec_source error naming module and importer", "[spec]") {
   auto spec = mirrorcpp::spec_from_files(tla("missing/MissingMain.tla"));
   REQUIRE_FALSE(spec.has_value());

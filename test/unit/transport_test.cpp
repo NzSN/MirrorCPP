@@ -246,6 +246,14 @@ TEST_CASE("tcp: embedded newline is rejected and nothing is written", "[transpor
   REQUIRE(bad.error().kind == ErrorKind::io);
   REQUIRE(bad.error().message.find("newline") != std::string::npos);
 
+  const auto empty = tr.send_line("");
+  REQUIRE_FALSE(empty.has_value());
+  REQUIRE(empty.error().kind == ErrorKind::io);
+
+  const auto huge = tr.send_line(std::string(65536, 'x'));
+  REQUIRE_FALSE(huge.has_value());
+  REQUIRE(huge.error().kind == ErrorKind::io);
+
   // The rejected line must NOT have been written: the next echo is 'good'.
   REQUIRE(tr.send_line("good").has_value());
   const auto line = tr.recv_line();
@@ -338,6 +346,14 @@ TEST_CASE("stdio: embedded newline rejected and nothing written", "[transport][s
   REQUIRE(bad.error().kind == ErrorKind::io);
   REQUIRE(bad.error().message.find("newline") != std::string::npos);
 
+  const auto empty = t->send_line("");
+  REQUIRE_FALSE(empty.has_value());
+  REQUIRE(empty.error().kind == ErrorKind::io);
+
+  const auto huge = t->send_line(std::string(65536, 'x'));
+  REQUIRE_FALSE(huge.has_value());
+  REQUIRE(huge.error().kind == ErrorKind::io);
+
   // Nothing was piped to /bin/cat: the next good line echoes back first.
   REQUIRE(t->send_line("good").has_value());
   const auto line = t->recv_line();
@@ -356,4 +372,3 @@ TEST_CASE("stdio: close() is idempotent", "[transport][stdio]") {
   REQUIRE(c2.has_value());
   REQUIRE(*c2 == 0);
 }
-

@@ -60,6 +60,7 @@ std::string read_stdout(const std::string& cmd) {
 struct TestCerts {
   std::string dir;
   std::string ca, ca_key, server_cert, server_key;
+  std::string cn_server_cert, cn_server_key;
   std::string client_cert, client_key;
   std::string client2_cert, client2_key; // signed by a different CA
   std::string client_0644_key;           // 0644 copy of the client key
@@ -72,6 +73,7 @@ struct TestCerts {
     dir = d;
     ca = dir + "/ca.crt"; ca_key = dir + "/ca.key";
     server_cert = dir + "/server.crt"; server_key = dir + "/server.key";
+    cn_server_cert = dir + "/cn-server.crt"; cn_server_key = dir + "/cn-server.key";
     client_cert = dir + "/client.crt"; client_key = dir + "/client.key";
     client2_cert = dir + "/client2.crt"; client2_key = dir + "/client2.key";
     client_0644_key = dir + "/client_0644.key";
@@ -87,6 +89,13 @@ struct TestCerts {
     REQUIRE(run_cmd("openssl x509 -req -in " + dir + "/server.csr -CA " + ca +
                     " -CAkey " + ca_key + " -CAcreateserial -out " + server_cert +
                     " -days 1 -sha256 -copy_extensions copy 2>/dev/null"));
+    // CN-only server cert: clients must reject it because server identity must
+    // be present in subjectAltName, never only in the legacy common name.
+    REQUIRE(run_cmd("openssl req -newkey rsa:2048 -nodes -keyout " + cn_server_key +
+                    " -out " + dir + "/cn-server.csr -subj \"/CN=localhost\" 2>/dev/null"));
+    REQUIRE(run_cmd("openssl x509 -req -in " + dir + "/cn-server.csr -CA " + ca +
+                    " -CAkey " + ca_key + " -CAcreateserial -out " + cn_server_cert +
+                    " -days 1 -sha256 2>/dev/null"));
     // client cert (good)
     REQUIRE(run_cmd("openssl req -newkey rsa:2048 -nodes -keyout " + client_key +
                     " -out " + dir + "/client.csr -subj \"/CN=mirrorcpp-test-client\" 2>/dev/null"));
@@ -229,4 +238,3 @@ TlsOptions default_opts() {
 } // namespace
 
 #endif
-

@@ -19,7 +19,7 @@ Scenarios (t5 stepping + t6 one-shots + t10 explore):
   gen_traces — register_trace_gen -> gen_traces_done with inline itfTraces
   explore_session — register_explore_session -> explorer_ready, then generic
       command/reply alternation until explore_done -> explore_session_done
-  explore_bad_command — first command -> protocol_error (recoverable), then
+  explore_bad_command — first command -> protocol_error; client must close
       a valid reply, then done
   explore_stepping — register_explore happy path (full-state parameters)
 """
@@ -127,7 +127,7 @@ def drive_stepping(start_hr):
     if not hc_vars_equal(state_of(report), states[0]):
         write_msg({"proto_step": "step_mismatch", "expected": states[0],
                    "actual": state_of(report),
-                   "hints": [{"path": ["hr"], "kind": "value_mismatch",
+                   "hints": [{"path": [{"field": "hr"}], "kind": "value_mismatch",
                               "expected": states[0]["hr"],
                               "actual": state_of(report).get("hr")}]})
         return 1
@@ -143,7 +143,7 @@ def drive_stepping(start_hr):
         if not hc_vars_equal(state_of(report), states[i]):
             write_msg({"proto_step": "step_mismatch", "expected": states[i],
                        "actual": state_of(report),
-                       "hints": [{"path": ["hr"], "kind": "value_mismatch",
+                       "hints": [{"path": [{"field": "hr"}], "kind": "value_mismatch",
                                   "expected": states[i]["hr"],
                                   "actual": state_of(report).get("hr")}]})
             return 1
@@ -186,9 +186,9 @@ def run_mismatch():
                "expected": expected,
                "actual": actual,
                "hints": [
-                   {"path": ["hr"], "kind": "value_mismatch",
+                   {"path": [{"field": "hr"}], "kind": "value_mismatch",
                     "expected": expected["hr"], "actual": actual.get("hr")},
-                   {"path": ["ticked"], "kind": "value_mismatch",
+                   {"path": [{"field": "ticked"}], "kind": "value_mismatch",
                     "expected": expected["ticked"], "actual": actual.get("ticked")},
                ]})
     while sys.stdin.readline():
@@ -341,13 +341,12 @@ def run_explore_session():
 
 
 def run_explore_bad_command():
-    """Deliberate bad command -> recoverable protocol_error, session still
-    usable, then done."""
+    """Deliberate bad command -> fatal protocol_error, then expect EOF."""
     if expect_step("register_explore_session") is None:
         return 1
     write_msg({"proto_step": "explorer_ready",
                "initTransitions": 2, "nextTransitions": 1, "stateInvariants": 1})
-    # First command: any -> protocol_error (recoverable).
+    # First command: any -> protocol_error (fatal for this connection).
     first = read_msg()
     if first is None:
         return 1
@@ -356,41 +355,9 @@ def run_explore_bad_command():
         return 0
     write_msg({"proto_step": "protocol_error",
                "error": "fake mirror: bad transition id " + str(first.get("transitionId"))})
-    # Second command: valid reply (session still usable).
-    second = read_msg()
-    if second is None:
+    while sys.stdin.readline():
         return 1
-    s2 = second.get("proto_step")
-    if s2 == "explore_done":
-        write_msg({"proto_step": "explore_session_done"})
-        while sys.stdin.readline():
-            pass
-        return 0
-    if s2 == "explore_assume_transition":
-        write_msg({"proto_step": "explore_transition_status", "status": "ENABLED"})
-    elif s2 == "explore_next_step":
-        write_msg({"proto_step": "explore_step_done", "stepNo": 1})
-    elif s2 == "explore_query_state":
-        write_msg({"proto_step": "explore_state",
-                   "state": hc_state(1, 1, False, "init", 0)})
-    elif s2 == "explore_check_invariant":
-        write_msg({"proto_step": "explore_invariant_status", "status": "SATISFIED"})
-    elif s2 == "explore_rollback":
-        write_msg({"proto_step": "explore_rollback_done",
-                   "snapshotId": second.get("snapshotId", 0)})
-    else:
-        write_msg({"proto_step": "protocol_error",
-                   "error": "fake mirror: unexpected explore command " + s2})
-    # Then done.
-    third = read_msg()
-    if third is None:
-        return 1
-    if third.get("proto_step") == "explore_done":
-        write_msg({"proto_step": "explore_session_done"})
-        while sys.stdin.readline():
-            pass
-        return 0
-    return 1
+    return 0
 
 
 def run_explore_stepping():
@@ -490,7 +457,7 @@ def run_trace():
             exp = expected_states()[0]
             act = hc_state(2, 1, True, "tick", 1)
             write_msg({"proto_step": "step_mismatch", "expected": exp, "actual": act,
-                       "hints": [{"path": ["hr"], "kind": "value_mismatch",
+                       "hints": [{"path": [{"field": "hr"}], "kind": "value_mismatch",
                                   "expected": exp["hr"], "actual": act["hr"]}]})
         elif code == 17:
             # explore result: reply depends on the command received

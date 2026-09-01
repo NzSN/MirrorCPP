@@ -31,7 +31,8 @@ set(_fake_scripts
   fake_mirror_explore_bad_command
   fake_mirror_explore_stepping
   fake_mirror_trace
-  fake_mirror_tcp.py)
+  fake_mirror_tcp.py
+  fake_mirror_async.py)
 foreach(_s IN LISTS _fake_scripts)
   file(CHMOD ${CMAKE_CURRENT_SOURCE_DIR}/${_s}
        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
@@ -71,6 +72,20 @@ target_compile_definitions(mirrorcpp_explore_session_test PRIVATE
   MIRRORCPP_TEST_INTEGRATION_DIR="${MIRRORCPP_INTEGRATION_DIR}")
 catch_discover_tests(mirrorcpp_explore_session_test)
 
+# Async job interface integration tests (guide §6): the async API against the
+# scripted TCP fake mirror (fake_mirror_async.py) — submit/query/await/cancel,
+# long-poll + idempotent terminals (C18), queue full (C22), unknown ids (C21),
+# infraError outcomes, cross-connection job control (C17), stdio preflight.
+add_executable(mirrorcpp_async_jobs_test async_jobs_test.cpp)
+target_link_libraries(mirrorcpp_async_jobs_test PRIVATE
+  mirrorcpp::mirrorcpp
+  Catch2::Catch2WithMain)
+target_include_directories(mirrorcpp_async_jobs_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(mirrorcpp_async_jobs_test PRIVATE
+  MIRRORCPP_TEST_INTEGRATION_DIR="${MIRRORCPP_INTEGRATION_DIR}")
+catch_discover_tests(mirrorcpp_async_jobs_test)
+
 # ---------------------------------------------------------------------------
 # MBT fixture protocol tests (design §8 "Conformance north star"): drive the
 # client flows through the trace-driven fake mirror using the vendored
@@ -105,9 +120,9 @@ if(MIRRORCPP_BUILD_CLI)
 endif()
 
 # ---------------------------------------------------------------------------
-# Real-mirror test (design §8 scenario 1): replays a vendored HourClock ITF
-# trace via run_client_with_traces over stdio. Standalone program: skips with
-# exit code 77 when $MIRROR_BIN is unset (ctest SKIP_RETURN_CODE).
+# Real-mirror test: replays Counter over stdio, TCP, and a real ephemeral-PKI
+# mTLS server, then exercises the broader HourClock/async matrix. Standalone
+# program: skips with exit code 77 when $MIRROR_BIN is unset.
 # ---------------------------------------------------------------------------
 add_executable(mirrorcpp_real_mirror_test real_mirror_test.cpp)
 target_link_libraries(mirrorcpp_real_mirror_test PRIVATE
@@ -119,4 +134,3 @@ target_compile_definitions(mirrorcpp_real_mirror_test PRIVATE
 add_test(NAME real_mirror_hourclock COMMAND mirrorcpp_real_mirror_test)
 set_tests_properties(real_mirror_hourclock PROPERTIES
   SKIP_RETURN_CODE 77)
-

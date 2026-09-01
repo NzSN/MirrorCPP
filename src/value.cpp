@@ -1,6 +1,7 @@
 // mirrorcpp/value.cpp — Value variant + ITF codec implementation (design §3.4, §5.1).
 #include <mirrorcpp/value.hpp>
 
+#include <cmath>
 #include <string>
 
 namespace mirrorcpp {
@@ -145,8 +146,17 @@ Value decode_value(const nlohmann::json& j) {
   if (j.is_string()) return Value(j.get<std::string>());
   if (j.is_number_unsigned()) return Value(Value::Int(j.get<std::uint64_t>()));
   if (j.is_number_integer()) return Value(Value::Int(j.get<std::int64_t>()));
-  if (j.is_number_float())
-    throw JsonError("floating-point value cannot be decoded as an integer");
+  if (j.is_number_float()) {
+    // Haskell parity (pinned by the golden corpus, decode_only.jsonl): bare
+    // *integral* JSON numbers are accepted on decode (2.0, 3e2, 1.23e5) even
+    // though a conforming client always emits #bigint (guide C11). Only
+    // non-integral numbers are rejected. cpp_int construction from a double
+    // truncates; d is integral here.
+    const double d = j.get<double>();
+    if (!std::isfinite(d) || std::trunc(d) != d)
+      throw JsonError("bare JSON number not in ITF grammar");
+    return Value(Value::Int(d));
+  }
 
   if (j.is_array()) {
     Value::Seq seq;

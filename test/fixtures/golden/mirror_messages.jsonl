@@ -1,0 +1,30 @@
+{"proto_step":"spec_validated","result":"valid"}
+{"proto_step":"spec_validated","result":{"invalid":"Invariant violated"}}
+{"action":"Init","proto_step":"initial_state","state":{"action_taken":"Init","h":{"#bigint":"0"}}}
+{"action":"Tick","parameters":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null},"proto_step":"next_step"}
+{"proto_step":"step_ok"}
+{"actual":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null},"expected":{"action_taken":"Init","h":{"#bigint":"0"}},"hints":[{"actual":{"#bigint":"2"},"expected":{"#bigint":"1"},"kind":"value_mismatch","path":[{"field":"h"},{"index":0}]},{"expected":{"#bigint":"9"},"kind":"missing","path":[{"field":"k"}]},{"actual":"x","kind":"extra","path":[{"index":3}]},{"expected":{"#bigint":"4"},"kind":"missing_elem","path":[{"field":"s"}]},{"actual":{"#bigint":"5"},"kind":"extra_elem","path":[{"field":"s"}]},{"actual":false,"expected":{"#bigint":"1"},"kind":"type_mismatch","path":[{"field":"h"}]},{"kind":"truncated","path":[{"field":"s"},{"index":50}]}],"proto_step":"step_mismatch"}
+{"actual":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null},"expected":{"action_taken":"Init","h":{"#bigint":"0"}},"hints":[],"proto_step":"step_mismatch"}
+{"proto_step":"all_steps_done"}
+{"itfTracePaths":["out/itf/trace1.itf.json"],"itfTraces":[],"proto_step":"gen_traces_done"}
+{"error":"apalache failed","proto_step":"register_error"}
+{"error":"unexpected message","proto_step":"protocol_error"}
+{"initTransitions":2,"nextTransitions":3,"proto_step":"explorer_ready","stateInvariants":1}
+{"proto_step":"explore_transition_status","status":"ENABLED"}
+{"proto_step":"explore_step_done","stepNo":4}
+{"proto_step":"explore_state","state":{"h":{"#bigint":"12"},"m":{"#map":[["1",true]]},"name":"tick","ok":true,"rec":{"a":{"#bigint":"42"},"b":null},"s":{"#set":[{"#bigint":"1"},{"#bigint":"2"},{"#bigint":"3"}]},"seq":[{"#bigint":"1"},"x"],"tup":{"#tup":[{"#bigint":"1"},false]},"u":{"#unserializable":"SetOfSets"},"v":{"tag":"Some","value":{"#bigint":"7"}},"z":null}}
+{"proto_step":"explore_invariant_status","status":"SATISFIED"}
+{"proto_step":"explore_assume_status","status":"ENABLED"}
+{"proto_step":"explore_rollback_done","snapshotId":2}
+{"proto_step":"explore_session_done"}
+{"jobId":"job-7f3a","kind":"validate","proto_step":"job_accepted"}
+{"jobId":"job-9","kind":"gen_traces","proto_step":"job_accepted"}
+{"jobId":"job-7f3a","phase":"pending","proto_step":"job_status"}
+{"jobId":"job-7f3a","phase":"running","proto_step":"job_status"}
+{"jobId":"job-7f3a","phase":"done","proto_step":"job_status"}
+{"jobId":"job-7f3a","phase":"failed","proto_step":"job_status"}
+{"jobId":"job-7f3a","phase":"cancelled","proto_step":"job_status"}
+{"jobId":"job-gone","phase":"unknown","proto_step":"job_status"}
+{"jobId":"job-7f3a","outcome":{"validate":"valid"},"proto_step":"job_result"}
+{"jobId":"job-9","outcome":{"genTraces":{"itfTracePaths":["out/itf/t1.itf.json"],"itfTraces":[]}},"proto_step":"job_result"}
+{"jobId":"job-9","outcome":{"error":"worker died"},"proto_step":"job_result"}

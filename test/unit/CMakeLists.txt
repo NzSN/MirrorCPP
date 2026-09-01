@@ -81,3 +81,16 @@ target_compile_definitions(mirrorcpp_spec_test PRIVATE
   MIRRORCPP_SPECS_DIR="${CMAKE_SOURCE_DIR}/specs")
 catch_discover_tests(mirrorcpp_spec_test)
 
+# Golden wire corpus replay (guide §10 item 1): the vendored
+# fixtures/golden/*.jsonl (frozen from Haskell ModelMirrors@3496251) drive
+# decode-side (mirror_messages), encode-side (client_messages), value-codec
+# (decode_only), registry-parser (consul_payloads) and equality (diff_cases)
+# vectors. Always on — the corpus is vendored, no MIRROR_BIN needed.
+add_executable(mirrorcpp_golden_corpus_test golden_corpus_test.cpp)
+target_link_libraries(mirrorcpp_golden_corpus_test PRIVATE
+  mirrorcpp::mirrorcpp
+  Catch2::Catch2WithMain)
+target_compile_definitions(mirrorcpp_golden_corpus_test PRIVATE
+  MIRRORCPP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
+catch_discover_tests(mirrorcpp_golden_corpus_test)
+

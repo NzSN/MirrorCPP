@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
-#include <regex>
+#include <cctype>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -17,35 +17,6 @@
 
 namespace mirrorcpp {
 namespace {
-
-// -----------------------------------------------------------------------
-// Comment stripping (defensive; the regexes below are line-anchored)
-// -----------------------------------------------------------------------
-// Remove \* line comments and (* ... *) block comments so EXTENDS/INSTANCE
-// clauses inside comments never count. TLA+ strings may contain these
-// markers, but the pragmatism matches the sibling clients.
-std::string strip_comments(const std::string& src) {
-  std::string out;
-  out.reserve(src.size());
-  bool in_block = false;
-  const std::size_t n = src.size();
-  std::size_t i = 0;
-  while (i < n) {
-    if (in_block) {
-      if (i + 1 < n && src[i] == '*' && src[i + 1] == ')') { in_block = false; i += 2; }
-      else ++i;
-      continue;
-    }
-    if (i + 1 < n && src[i] == '(' && src[i + 1] == '*') { in_block = true; i += 2; continue; }
-    if (src[i] == '\\' && i + 1 < n && src[i + 1] == '*') {
-      while (i < n && src[i] != '\n') ++i;
-      continue;
-    }
-    out.push_back(src[i]);
-    ++i;
-  }
-  return out;
-}
 
 // -----------------------------------------------------------------------
 // Builtin modules that are always resolvable by Apalache (never vendored)
@@ -60,30 +31,74 @@ bool is_builtin(std::string_view name) {
 }
 
 // -----------------------------------------------------------------------
-// EXTENDS / INSTANCE clause parsing (design §5.5)
+// EXTENDS / INSTANCE clause parsing (guide C13)
 // -----------------------------------------------------------------------
-// Line-anchored, multiline: ^\s*EXTENDS\s+(.+)$ / ^\s*INSTANCE\s+(.+)$.
-// Module refs = first whitespace-token of each comma-separated part, so
-// "INSTANCE X WITH y <- z" yields X.
-std::vector<std::string> import_names(const std::string& src) {
-  static const std::regex extends_re(R"(^\s*EXTENDS\s+(.+)$)", std::regex::multiline);
-  static const std::regex instance_re(R"(^\s*INSTANCE\s+(.+)$)", std::regex::multiline);
-
-  std::vector<std::string> names;
-  const std::string stripped = strip_comments(src);
-  for (const auto& re : {&extends_re, &instance_re}) {
-    auto it = std::sregex_iterator(stripped.begin(), stripped.end(), *re);
-    const auto end = std::sregex_iterator();
-    for (; it != end; ++it) {
-      const std::string body = (*it)[1].str();
-      std::istringstream parts(body);
-      std::string part;
-      while (std::getline(parts, part, ',')) {
-        std::istringstream tokstream(part);
-        std::string tok;
-        tokstream >> tok;  // first whitespace-token of the part
-        if (!tok.empty()) names.push_back(tok);
+// Tokenize only identifiers and commas outside strings, line comments, and
+// nested block comments. This covers continued EXTENDS lists plus INSTANCE in
+// top-level, LOCAL, and operator-expression forms.
+std::vector<std::string> dependency_tokens(const std::string& src) {
+  std::vector<std::string> out;
+  std::size_t i = 0;
+  std::size_t block_depth = 0;
+  while (i < src.size()) {
+    if (block_depth > 0) {
+      if (i + 1 < src.size() && src[i] == '(' && src[i + 1] == '*') {
+        ++block_depth; i += 2; continue;
       }
+      if (i + 1 < src.size() && src[i] == '*' && src[i + 1] == ')') {
+        --block_depth; i += 2; continue;
+      }
+      ++i;
+      continue;
+    }
+    if (i + 1 < src.size() && src[i] == '\\' && src[i + 1] == '*') {
+      while (i < src.size() && src[i] != '\n') ++i;
+      continue;
+    }
+    if (i + 1 < src.size() && src[i] == '(' && src[i + 1] == '*') {
+      block_depth = 1; i += 2; continue;
+    }
+    if (src[i] == '"') {
+      ++i;
+      while (i < src.size()) {
+        if (src[i] == '\\' && i + 1 < src.size()) { i += 2; continue; }
+        if (src[i] == '"') { ++i; break; }
+        ++i;
+      }
+      continue;
+    }
+    if (src[i] == ',') { out.emplace_back(","); ++i; continue; }
+    const auto c = static_cast<unsigned char>(src[i]);
+    if (std::isalpha(c) || src[i] == '_') {
+      const std::size_t start = i++;
+      while (i < src.size()) {
+        const auto d = static_cast<unsigned char>(src[i]);
+        if (!std::isalnum(d) && src[i] != '_') break;
+        ++i;
+      }
+      out.push_back(src.substr(start, i - start));
+      continue;
+    }
+    ++i;
+  }
+  return out;
+}
+
+std::vector<std::string> import_names(const std::string& src) {
+  std::vector<std::string> names;
+  const auto tokens = dependency_tokens(src);
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    if (tokens[i] == "EXTENDS") {
+      std::size_t j = i + 1;
+      if (j >= tokens.size() || tokens[j] == ",") continue;
+      names.push_back(tokens[j++]);
+      while (j + 1 < tokens.size() && tokens[j] == "," && tokens[j + 1] != ",") {
+        names.push_back(tokens[j + 1]);
+        j += 2;
+      }
+      i = j == 0 ? 0 : j - 1;
+    } else if (tokens[i] == "INSTANCE" && i + 1 < tokens.size()) {
+      names.push_back(tokens[++i]);
     }
   }
   return names;

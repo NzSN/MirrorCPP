@@ -5,8 +5,7 @@
 //   - ExploreSession::open -> explorer_ready (init/next/invariant counts)
 //   - strict alternation: assume_transition -> next_step -> query_state ->
 //     check_invariant -> rollback -> done
-//   - a protocol_error reply is a RECOVERABLE per-call error: the session
-//     STAYS OPEN and the next command succeeds
+//   - a protocol_error reply poisons the session; the next command is rejected
 //   - run_client_explore: register_explore stepping happy path, where
 //     next_step.parameters carries the FULL expected state (§3.2)
 #include <mirrorcpp/mirrorcpp.hpp>
@@ -98,10 +97,9 @@ TEST_CASE("ExploreSession: assume_state returns transition status",
 }
 
 // ---------------------------------------------------------------------------
-// Recoverable protocol_error: a bad command is a per-call error, the session
-// stays open, and the next command succeeds (§3.3).
+// Fatal protocol_error: the connection is unusable for this flow (guide §9).
 // ---------------------------------------------------------------------------
-TEST_CASE("ExploreSession: protocol_error is recoverable", "[integration][explore]") {
+TEST_CASE("ExploreSession: protocol_error poisons the session", "[integration][explore]") {
   auto transport = spawn_mirror(fake_mirror_path("fake_mirror_explore_bad_command"));
   REQUIRE(transport != nullptr);
 
@@ -114,13 +112,10 @@ TEST_CASE("ExploreSession: protocol_error is recoverable", "[integration][explor
   REQUIRE_FALSE(bad.has_value());
   CHECK(bad.error().kind == ErrorKind::protocol);
 
-  // Session is STILL usable: the next command succeeds.
+  // The next command is rejected locally; no further flow bytes are sent.
   auto good = session->assume_transition(1);
-  REQUIRE(good.has_value());
-  CHECK(*good == TransitionStatus::enabled);
-
-  auto done = session->done();
-  REQUIRE(done.has_value());
+  REQUIRE_FALSE(good.has_value());
+  CHECK(good.error().kind == ErrorKind::io);
 }
 
 // ---------------------------------------------------------------------------

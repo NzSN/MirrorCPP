@@ -54,7 +54,10 @@ README) and from the architecture of the MirrorECMA sibling client.
 
 - **No mirror implementation.** MirrorCPP never runs Apalache and never acts as a server.
 - **No async runtime.** The protocol strictly alternates request/reply; the public API is blocking.
-  Callers wanting concurrency run independent sessions on their own threads.
+  Callers wanting concurrency run independent sessions on their own threads. (Note: the mirror's
+  asynchronous *job* interface — `register_*_async`/`query_job`/`await_job`/`cancel_job`, guide §6 —
+  IS implemented; it is ordinary blocking request/reply over server-mode connections, not a
+  client-side async runtime.)
 - **No general-purpose JSON-RPC/Consul client.** Only the single registry endpoint and the session
   protocol are implemented.
 - **Header-only distribution is not a goal** (a compiled static/shared library keeps TLS and
@@ -96,6 +99,11 @@ Client → mirror:
 | `register_explore` | `spec` (inline, required), `invariants`, `exports`, `maxSteps?` |
 | `register_explore_session` | `spec` (inline, required), `invariants`, `exports` |
 | `register_validate` | `apalacheConfig`, `bound`, `spec?` |
+| `register_validate_async` (server modes) | `apalacheConfig`, `bound`, `spec?` |
+| `register_trace_gen_async` (server modes) | `apalacheConfig`, `traceConfig`, `destPath?`, `spec?` |
+| `query_job` (server modes) | `jobId` |
+| `await_job` (server modes) | `jobId`, `timeoutSecs?` |
+| `cancel_job` (server modes) | `jobId` |
 | `report_state` | `state` |
 | `explore_assume_transition` | `transitionId` |
 | `explore_next_step` | — |
@@ -125,6 +133,9 @@ Mirror → client:
 | `explore_invariant_status` | `status`: `SATISFIED` \| `VIOLATED` \| `UNKNOWN` |
 | `explore_rollback_done` | `snapshotId` |
 | `explore_session_done` | — |
+| `job_accepted` (server modes) | `jobId`, `kind`: `validate` \| `gen_traces` |
+| `job_status` (server modes) | `jobId`, `phase`: `pending` \| `running` \| `done` \| `failed` \| `cancelled` \| `unknown` |
+| `job_result` (server modes) | `jobId`, `outcome`: `{"validate": <ValidateResult>}` \| `{"genTraces": {…}}` \| `{"error": "…"}` (infraError — not a spec verdict, retryable) |
 
 `apalacheConfig` fields: `specPath` (string, **always sent** — when an inline `spec` is present the
 mirror materializes the sources and ignores the path, so a placeholder is fine), `initPredicate?`,
@@ -162,8 +173,8 @@ mirror → all_steps_done
 
 - After `explorer_ready`, client commands and mirror replies **strictly alternate**, in any order,
   until `explore_done` → `explore_session_done`.
-- A `protocol_error` rejects the offending command but **the session stays open** — the client
-  library must surface it as a recoverable, per-call error, not a fatal one.
+- A `protocol_error` identifies a client/session bug: the library closes and
+  poisons the connection, and subsequent calls fail locally.
 
 **One-shot flows**: `register_validate` → exactly one reply (`spec_validated` or
 `register_error`), session ends. `register_trace_gen` → `gen_traces_done` (paths + optional
@@ -584,6 +595,27 @@ struct ValidateVerdict { bool valid; std::string detail; };  // detail = apalach
 Result<ValidateVerdict> run_client_validate(Transport&, const ApalacheConfig&, long long bound,
                                             std::optional<ApalacheSpec> = std::nullopt);
 
+// Asynchronous job interface (guide §6; server-mode transports only — checked via
+// Transport::async_capable(), stdio submits fail fast with Error{protocol}).
+// jobIds are plain strings: cross-connection visible (C17). await_job is long-polling:
+// timeout → JobStatus (non-terminal, never an error); terminal JobResults are idempotent
+// until eviction (C18). JobPhase::unknown = never submitted/evicted — never retry-loop
+// on it (C21). A full job queue rejects at submit with register_error →
+// Error{registration} (C22). The validate outcome reuses SpecValidated — identical to
+// the sync verdict for the same config (C20). The borrowed transport is NEVER closed
+// by these calls.
+Result<JobAccepted> submit_validate_async(Transport&, const ApalacheConfig&, long long bound,
+                                          std::optional<ApalacheSpec> = std::nullopt);
+Result<JobAccepted> submit_trace_gen_async(Transport&, const ApalacheConfig&,
+                                           const TraceGenerationConfig&,
+                                           std::optional<std::string> dest_path = std::nullopt,
+                                           std::optional<ApalacheSpec> = std::nullopt);
+Result<JobStatus>   query_job(Transport&, std::string_view job_id);
+using AwaitResult = std::variant<JobStatus, JobResult>;
+Result<AwaitResult> await_job(Transport&, std::string_view job_id,
+                              std::optional<long long> timeout_secs = std::nullopt);
+Result<AwaitResult> cancel_job(Transport&, std::string_view job_id);
+
 // Client-driven symbolic sessions:
 class ExploreSession {
 public:
@@ -601,8 +633,8 @@ public:
   Result<void>             done();     // explore_done → explore_session_done, then close
   ~ExploreSession();                   // best-effort done() if still open
 private:
-  Result<MirrorMessage> command(const ClientMessage&);  // send + recv; protocol_error →
-};                                                      // recoverable per-call error, session stays open
+  Result<MirrorMessage> command(const ClientMessage&);  // send + recv; protocol_error → close
+};
 
 // Test helper: report a fixed sequence of states, then fail ("preset_client exhausted").
 StateComputer preset_client(std::vector<State> states);
@@ -714,8 +746,7 @@ applicable):
 4. `register_trace_gen` → `gen_traces_done` with inline `itfTraces`.
 5. `register_validate` valid + invalid specs; bound `101` → `register_error`.
 6. `register_explore` and a scripted `ExploreSession` (assume/next/query/checkInvariant/
-   rollback/done), including a deliberate bad command → recoverable `protocol_error` → session
-   still usable.
+   rollback/done), including a deliberate bad command → fatal `protocol_error` → session closed.
 7. mTLS: certs generated at test time with OpenSSL (or ModelMirrors `scripts/gen-certs.sh`
    equivalent); pin match and pin mismatch; wrong-CA client cert → handshake failure.
 8. Registry: tiny stub HTTP server in the test harness serving the Consul health response;
@@ -730,6 +761,18 @@ MirrorCPP through spec-generated message sequences (vendored ITF fixtures under
 `specs/traces/` already cover `all_steps_done`, `step_mismatch`, `register_error`,
 `explore_session`, `explore_cmd`, `fault_close`) and assert the emitted client messages match
 the trace — giving TLA+-level confidence in the client implementation itself.
+
+### Golden wire corpus (implemented)
+
+`test/fixtures/golden/` vendors the frozen Haskell wire corpus (`client_messages.jsonl`,
+`mirror_messages.jsonl`, `decode_only.jsonl`, `consul_payloads.jsonl`, `diff_cases.jsonl` +
+`manifest.json`/`metadata.json`, Haskell `ModelMirrors@3496251`; provenance and refresh
+procedure in `test/fixtures/golden/README.md`). `mirrorcpp_golden_corpus_test` replays it
+direction-aware: mirror messages decode-side against the manifest constructors, client
+messages encode-side with absent≡null normalization for optional keys (C14), `decode_only`
+as value-codec vectors (incl. bare integral number → `#bigint` acceptance), `consul_payloads`
+`health` lines through the registry parser, and all 500 `diff_cases` lines as decode/equality
+vectors under `filterMeta` semantics. Always on — no `MIRROR_BIN` needed.
 
 ## 9. Security considerations
 
@@ -814,8 +857,11 @@ Each milestone keeps the full test suite green against a real mirror binary.
 | `report_state`: all vars, omit paramVars, include `action_taken` | documented on `StateComputer`; helpers | HourClock + paramVars integration |
 | `step_mismatch` hints surfaced | `Error::hints`, `render_diff_hints` | mismatch integration test |
 | Validate bound cap 100 → `register_error` | `run_client_validate` passthrough | bound=101 integration test |
+| Async jobs: submit/query/await/cancel, C17–C22 semantics | `submit_*_async`, `query_job`, `await_job`, `cancel_job` | `mirrorcpp_async_jobs_test` (fake TCP mirror) + real-mirror `--serve` scenario |
+| Golden wire corpus replay (guide §10.1) | codecs vs `test/fixtures/golden/` | `mirrorcpp_golden_corpus_test` |
+| `register_explore.maxSteps` always sent (Lean mirror `reqNat`) | `run_client_explore` | real-mirror explore scenario |
 | `gen_traces_done.itfTraces` optional | `GenTracesResult` | trace-gen integration test |
-| Explore strict alternation; recoverable `protocol_error` | `ExploreSession::command` | explore integration tests |
+| Explore strict alternation; fatal `protocol_error` | `ExploreSession::command` | explore integration tests |
 | TLS 1.3 only, SAN verify, client cert | `detail/tls.hpp` | TLS integration tests |
 | Pin = SHA-256(leaf DER) lowercase hex; override wins | `connect_tls`, `connect_from_registry` | pin match/mismatch tests |
 | Client key mode 0600 (POSIX) | `detail/tls.hpp` | key-mode unit test |

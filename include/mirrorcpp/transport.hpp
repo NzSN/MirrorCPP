@@ -42,6 +42,12 @@ public:
   // returns the child's exit code. TCP/TLS: closes the socket and returns 0.
   // Idempotent: subsequent calls return the last close result.
   virtual Result<long> close() = 0;
+
+  // Whether this transport can carry the async job interface (guide §6):
+  // server-mode connections (TCP/TLS) can; stdio cannot (the mirror rejects
+  // async messages on a stdio session with register_error). The async submit
+  // API refuses up front on a non-capable transport. Default: false.
+  virtual bool async_capable() const noexcept { return false; }
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +92,7 @@ public:
   Result<void> send_line(std::string_view line) override;
   Result<std::string> recv_line() override;
   Result<long> close() override;
+  bool async_capable() const noexcept override { return true; } // server mode (guide §6)
 
   // Lowercase hex SHA-256 of the peer LEAF certificate's DER bytes (design
   // §3.6). Empty if the handshake has not been completed.

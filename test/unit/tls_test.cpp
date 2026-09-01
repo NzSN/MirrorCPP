@@ -72,6 +72,17 @@ TEST_CASE("tls: pin match succeeds", "[tls]") {
   REQUIRE(*cl == 0L);
 }
 
+TEST_CASE("tls: CN-only server certificate is rejected (SAN required)", "[tls]") {
+  const auto& c = certs();
+  TlsTestServer srv(c.ca, c.cn_server_cert, c.cn_server_key,
+                    TLS1_3_VERSION, TLS1_3_VERSION, true);
+  auto opts = default_opts();
+  opts.servername = "localhost";
+  auto t = connect_tls("127.0.0.1", static_cast<std::uint16_t>(srv.port()), opts);
+  REQUIRE_FALSE(t.has_value());
+  REQUIRE(t.error().kind == ErrorKind::tls);
+}
+
 TEST_CASE("tls: pin mismatch fails with a tls error", "[tls]") {
   const auto& c = certs();
   TlsTestServer srv(c.ca, c.server_cert, c.server_key, TLS1_3_VERSION, TLS1_3_VERSION, true);

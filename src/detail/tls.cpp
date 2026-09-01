@@ -243,11 +243,14 @@ Result<void> SslStream::connect(std::string_view host, std::uint16_t port,
       return unexpected(Error(ErrorKind::tls, "X509_VERIFY_PARAM_set1_ip_asc failed"));
     }
   } else {
+    X509_VERIFY_PARAM_set_hostflags(vparam, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
     if (SSL_set1_host(ssl, verify_name.c_str()) != 1) {
       return unexpected(Error(ErrorKind::tls, "SSL_set1_host failed"));
     }
+    if (SSL_set_tlsext_host_name(ssl, verify_name.c_str()) != 1) {
+      return unexpected(Error(ErrorKind::tls, "SSL_set_tlsext_host_name failed"));
+    }
   }
-  SSL_set_tlsext_host_name(ssl, verify_name.c_str()); // SNI
 
   // 7. Handshake under the deadline (non-blocking + poll).
   sock_.set_nonblocking(true);

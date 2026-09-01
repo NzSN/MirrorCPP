@@ -1,0 +1,3 @@
+---- MODULE AdvA ----
+EXTENDS Integers
+====

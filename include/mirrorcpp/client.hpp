@@ -102,13 +102,60 @@ Result<ValidateVerdict> run_client_validate(Transport& transport, const Apalache
                                             std::optional<ApalacheSpec> inline_spec = std::nullopt);
 
 // ---------------------------------------------------------------------------
+// Asynchronous job interface (guide §6) — server-mode transports only
+// ---------------------------------------------------------------------------
+//
+// Available on TCP/TLS connections (Transport::async_capable()); submitting on
+// a stdio session is rejected by the mirror with register_error, so the submit
+// functions refuse up front with Error{protocol} on a non-capable transport.
+//
+// jobIds are plain strings: process-unique and CROSS-CONNECTION VISIBLE
+// (C17) — a job submitted here may be queried/awaited/cancelled on any other
+// connection. NOTE (C6): the SUBMITTER's disconnect cancels and evicts its
+// jobs regardless of who is awaiting.
+//
+// A full job queue rejects at submit with register_error ("job queue full",
+// C22) → Error{registration}: handle it as the backpressure signal.
+
+// register_validate_async / register_trace_gen_async: submit a job; the
+// job_accepted reply is synchronous.
+Result<JobAccepted> submit_validate_async(Transport& transport, const ApalacheConfig& config,
+                                          long long bound,
+                                          std::optional<ApalacheSpec> inline_spec = std::nullopt);
+Result<JobAccepted> submit_trace_gen_async(Transport& transport,
+                                           const ApalacheConfig& config,
+                                           const TraceGenerationConfig& trace_config,
+                                           std::optional<std::string> dest_path = std::nullopt,
+                                           std::optional<ApalacheSpec> inline_spec = std::nullopt);
+
+// query_job: poll the current phase. JobPhase::unknown means never-submitted
+// or evicted (C21) — do NOT retry-loop on it expecting the job to appear.
+Result<JobStatus> query_job(Transport& transport, std::string_view job_id);
+
+// The result of await_job / cancel_job: JobStatus (non-terminal) or
+// JobResult (terminal). Terminal results are idempotent — re-awaiting a
+// finished job returns the same JobResult until eviction (C18).
+using AwaitResult = std::variant<JobStatus, JobResult>;
+
+// await_job (C18 long-polling): without timeout_secs, blocks until the job
+// terminates; with timeout_secs, a timeout returns JobStatus (non-terminal),
+// never an error.
+Result<AwaitResult> await_job(Transport& transport, std::string_view job_id,
+                              std::optional<long long> timeout_secs = std::nullopt);
+
+// cancel_job (C19): cooperative cancel; terminates the spawned apalache
+// process server-side. Prefer this over dropping the connection when a job is
+// no longer needed. Replies job_result (already terminal) or job_status.
+Result<AwaitResult> cancel_job(Transport& transport, std::string_view job_id);
+
+// ---------------------------------------------------------------------------
 // Client-driven symbolic sessions (ExploreSession) — §5.6
 // ---------------------------------------------------------------------------
 
 // register_explore_session flow: client commands and mirror replies strictly
 // alternate, in any order, until explore_done → explore_session_done. A
-// protocol_error rejects the offending command but the session STAYS OPEN —
-// surfaced as a recoverable per-call error, not a fatal one (§3.3).
+// protocol_error or malformed/impossible reply closes and poisons the session
+// (client guide §9); subsequent calls report that it is closed.
 class ExploreSession {
 public:
   struct Ready {
@@ -139,11 +186,13 @@ public:
   Result<void>             done();  // explore_done → explore_session_done, then close
 
 private:
-  ExploreSession(std::unique_ptr<Transport> transport, Ready ready);
-  Result<MirrorMessage> command(const ClientMessage& msg);  // send + recv
+  ExploreSession(std::unique_ptr<Transport> transport, Ready ready, PhaseGuard guard);
+  Result<MirrorMessage> command(const ClientMessage& msg);  // guard + send + recv
+  void poison() noexcept;
 
   std::unique_ptr<Transport> transport_;
   Ready ready_;
+  PhaseGuard guard_;   // exploring-phase legality (C4/C5), moves with the session
   bool done_ = false;
 };
 
