@@ -29,14 +29,17 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "hourclock_client.hpp"
+#include "CounterMirror.generated.hpp"
 
 using namespace mirrorcpp;
+using namespace mirrors_generated::counter;
 
 namespace {
 
@@ -107,9 +110,110 @@ bool is_extra_key_mismatch(const Result<void>& result) {
   return result.error().actual->contains("unexpected");
 }
 
+struct NegotiatedProbe {
+  int factory_calls = 0;
+  int sut_calls = 0;
+  int dispose_calls = 0;
+};
+
+class GeneratedCounterPort final : public CounterPort {
+ public:
+  GeneratedCounterPort(NegotiatedProbe& probe, Value::Int observer_offset = 0)
+      : probe_(probe), observer_offset_(std::move(observer_offset)) {}
+
+  void initialize() override {
+    ++probe_.sut_calls;
+    count_ = 0;
+  }
+  void tick(const TickInput& input) override {
+    ++probe_.sut_calls;
+    count_ += input.stride;
+  }
+  CounterObservation observe() override {
+    ++probe_.sut_calls;
+    return {count_ + observer_offset_};
+  }
+
+ private:
+  NegotiatedProbe& probe_;
+  Value::Int count_ = 0;
+  Value::Int observer_offset_ = 0;
+};
+
+struct GeneratedSession {
+  GeneratedCounterPort port;
+  CounterBinding binding;
+
+  GeneratedSession(NegotiatedProbe& probe, const ApalacheConfig& config,
+                   Value::Int observer_offset)
+      : port(probe, std::move(observer_offset)), binding(bind_counter(port, config)) {}
+};
+
+struct GeneratedSelection {
+  NegotiatedProbe& probe;
+  SemanticDigest digest;
+  Value::Int observer_offset;
+  CompiledAdapterRegistry registry;
+  CompiledAdapterSelection selection;
+
+  GeneratedSelection(NegotiatedProbe& probe_ref,
+                     std::string digest_text = std::string(CounterSemanticDigest),
+                     Value::Int offset = 0)
+      : probe(probe_ref),
+        digest(*semantic_digest_from_hex(digest_text)),
+        observer_offset(std::move(offset)),
+        registry(std::vector<CompiledAdapterRegistration>{
+            CompiledAdapterRegistration{
+                CompiledAdapterKey{digest, "counter.mutable/v1",
+                    std::string(mirrorcpp_target_profile),
+                    std::string(state_computer_contract_version)},
+                [this](const ApalacheConfig& config) -> Result<LocalBinding> {
+                  ++probe.factory_calls;
+                  auto session = std::make_shared<GeneratedSession>(
+                      probe, config, observer_offset);
+                  LocalBinding local;
+                  local.semantic_digest = digest;
+                  local.computer = session->binding.computer;
+                  local.assert_compatible_config = [](const ApalacheConfig& candidate) {
+                    if (candidate.param_vars != "parameters") {
+                      return Result<void>(std::unexpected(Error(
+                          ErrorKind::model_interface,
+                          "Counter requires paramVars=parameters",
+                          "configuration_mismatch")));
+                    }
+                    return Result<void>{};
+                  };
+                  local.dispose = [this, session = std::move(session)]() mutable {
+                    ++probe.dispose_calls;
+                    session.reset();
+                    return Result<void>{};
+                  };
+                  return local;
+                }}}),
+        selection{
+            GeneratedModelInterface{digest_text, CounterModelInterface.contract_json},
+            "counter.mutable/v1",
+            std::string(mirrorcpp_target_profile),
+            std::string(state_computer_contract_version),
+            &registry,
+            NegotiationPolicy::require,
+            std::nullopt} {}
+};
+
+std::string command_output(const std::string& command) {
+  std::string output;
+  FILE* pipe = ::popen(command.c_str(), "r");
+  if (pipe == nullptr) return output;
+  char buffer[256];
+  while (::fgets(buffer, sizeof buffer, pipe) != nullptr) output += buffer;
+  ::pclose(pipe);
+  return output;
+}
+
 struct TestPki {
   std::filesystem::path dir;
   std::filesystem::path ca, server_cert, server_key, client_cert, client_key;
+  std::string client_fingerprint;
 
   TestPki() {
     char pattern[] = "/tmp/mirrorcpp-server-replay-XXXXXX";
@@ -157,6 +261,11 @@ struct TestPki {
     }
     ::chmod(server_key.c_str(), 0600);
     ::chmod(client_key.c_str(), 0600);
+    const std::string digest = command_output(
+        "openssl x509 -in '" + client_cert.string() +
+        "' -outform DER 2>/dev/null | openssl dgst -sha256 -r");
+    if (digest.size() < 64) throw std::runtime_error("cannot fingerprint client certificate");
+    client_fingerprint = digest.substr(0, 64);
   }
 
   ~TestPki() {
@@ -182,21 +291,23 @@ int free_loopback_port() {
   return port;
 }
 
-pid_t spawn_tls_server(const char* bin, int port, const TestPki& pki) {
+pid_t spawn_tls_server(const char* bin, int port, const TestPki& pki,
+                       std::optional<std::string> model_interface_client = std::nullopt) {
   const pid_t pid = ::fork();
   if (pid != 0) return pid;
-  const std::string port_s = std::to_string(port);
-  const std::string cert = pki.server_cert.string();
-  const std::string key = pki.server_key.string();
-  const std::string ca = pki.ca.string();
-  char* const argv[] = {
-      const_cast<char*>(bin), const_cast<char*>("--server"),
-      const_cast<char*>(port_s.c_str()), const_cast<char*>("--tls"),
-      const_cast<char*>("--cert"), const_cast<char*>(cert.c_str()),
-      const_cast<char*>("--key"), const_cast<char*>(key.c_str()),
-      const_cast<char*>("--ca"), const_cast<char*>(ca.c_str()),
-      const_cast<char*>("--jobs"), const_cast<char*>("2"), nullptr};
-  ::execv(bin, argv);
+  std::vector<std::string> arguments = {
+      bin, "--server", std::to_string(port), "--tls",
+      "--cert", pki.server_cert.string(), "--key", pki.server_key.string(),
+      "--ca", pki.ca.string(), "--jobs", "2"};
+  if (model_interface_client) {
+    arguments.push_back("--model-interface-allow-client");
+    arguments.push_back(*model_interface_client);
+  }
+  std::vector<char*> argv;
+  argv.reserve(arguments.size() + 1);
+  for (auto& argument : arguments) argv.push_back(argument.data());
+  argv.push_back(nullptr);
+  ::execv(bin, argv.data());
   _exit(127);
 }
 
@@ -253,6 +364,124 @@ int scenario_counter_mismatch(const char* bin) {
     return 1;
   }
   std::puts("PASS: incorrect Counter is rejected with terminal step_mismatch");
+  return 0;
+}
+
+int scenario_counter_negotiated(const char* bin) {
+  TraceGenerationConfig traces;
+  traces.num_traces = 4;
+  traces.view = "View";
+
+  NegotiatedProbe success_probe;
+  GeneratedSelection success_selection(success_probe);
+  auto success_transport = spawn_mirror(bin);
+  if (!success_transport) return 1;
+  auto success = run_client_negotiated(
+      *success_transport, counter_config(), traces, success_selection.selection);
+  if (!success || success_probe.factory_calls != 1 ||
+      success_probe.sut_calls == 0 || success_probe.dispose_calls != 1) {
+    std::fprintf(stderr, "FAIL: generated Counter negotiated stdio replay\n");
+    return 1;
+  }
+
+  NegotiatedProbe mismatch_probe;
+  GeneratedSelection mismatch_selection(mismatch_probe, std::string(64, 'b'));
+  auto mismatch_transport = spawn_mirror(bin);
+  if (!mismatch_transport) return 1;
+  auto mismatch = run_client_negotiated(
+      *mismatch_transport, counter_config(), traces, mismatch_selection.selection);
+  if (mismatch || mismatch_probe.factory_calls != 0 ||
+      mismatch_probe.sut_calls != 0 || mismatch_probe.dispose_calls != 0) {
+    std::fprintf(stderr, "FAIL: wrong generated digest did not fail before SUT\n");
+    return 1;
+  }
+
+  NegotiatedProbe wrong_observer_probe;
+  GeneratedSelection wrong_observer(wrong_observer_probe,
+                                    std::string(CounterSemanticDigest), 1);
+  auto wrong_observer_transport = spawn_mirror(bin);
+  if (!wrong_observer_transport) return 1;
+  auto wrong = run_client_negotiated(
+      *wrong_observer_transport, counter_config(), traces, wrong_observer.selection);
+  if (wrong || wrong.error().kind != ErrorKind::step_mismatch ||
+      wrong_observer_probe.factory_calls != 1 ||
+      wrong_observer_probe.sut_calls == 0 ||
+      wrong_observer_probe.dispose_calls != 1) {
+    std::fprintf(stderr, "FAIL: wrong generated observer did not reach step_mismatch\n");
+    return 1;
+  }
+  std::puts("PASS: generated Counter exact-digest negotiation over stdio");
+  return 0;
+}
+
+std::unique_ptr<TlsTransport> connect_replay_tls(int port, const TestPki& pki) {
+  TlsOptions options;
+  options.ca_path = pki.ca;
+  options.cert_path = pki.client_cert;
+  options.key_path = pki.client_key;
+  std::unique_ptr<TlsTransport> transport;
+  for (int attempt = 0; attempt < 100 && !transport; ++attempt) {
+    auto connected = connect_tls(
+        "127.0.0.1", static_cast<std::uint16_t>(port), options);
+    if (connected) transport = std::move(*connected);
+    else ::usleep(100000);
+  }
+  return transport;
+}
+
+int scenario_counter_negotiated_mtls(const char* bin) {
+  TestPki pki;
+  auto inline_spec = spec_from_files(counter_spec_path());
+  if (!inline_spec) return 1;
+  auto config = counter_config();
+  config.spec_path = "Counter.tla";
+  TraceGenerationConfig traces;
+  traces.num_traces = 4;
+  traces.view = "View";
+
+  {
+    const int port = free_loopback_port();
+    const pid_t server = spawn_tls_server(bin, port, pki, pki.client_fingerprint);
+    if (port <= 0 || server <= 0) return 1;
+    struct Guard {
+      pid_t pid;
+      ~Guard() { ::kill(pid, SIGTERM); ::waitpid(pid, nullptr, 0); }
+    } guard{server};
+    auto transport = connect_replay_tls(port, pki);
+    if (!transport) return 1;
+    NegotiatedProbe probe;
+    GeneratedSelection generated(probe);
+    auto result = run_client_negotiated(
+        *transport, config, traces, generated.selection, *inline_spec);
+    if (!result || probe.factory_calls != 1 || probe.sut_calls == 0 ||
+        probe.dispose_calls != 1) {
+      std::fprintf(stderr, "FAIL: allowlisted generated Counter mTLS replay\n");
+      return 1;
+    }
+  }
+
+  {
+    const int port = free_loopback_port();
+    const pid_t server = spawn_tls_server(bin, port, pki);
+    if (port <= 0 || server <= 0) return 1;
+    struct Guard {
+      pid_t pid;
+      ~Guard() { ::kill(pid, SIGTERM); ::waitpid(pid, nullptr, 0); }
+    } guard{server};
+    auto transport = connect_replay_tls(port, pki);
+    if (!transport) return 1;
+    NegotiatedProbe probe;
+    GeneratedSelection generated(probe);
+    auto result = run_client_negotiated(
+        *transport, config, traces, generated.selection, *inline_spec);
+    if (result || probe.factory_calls != 0 || probe.sut_calls != 0 ||
+        probe.dispose_calls != 0) {
+      std::fprintf(stderr, "FAIL: non-allowlisted mTLS negotiation reached SUT\n");
+      return 1;
+    }
+  }
+
+  std::puts("PASS: generated Counter mTLS allowlist gates adapter construction");
   return 0;
 }
 
@@ -765,8 +994,10 @@ int main() {
   failures += scenario_with_traces(bin);
   failures += scenario_counter_replay(bin);
   failures += scenario_counter_mismatch(bin);
+  failures += scenario_counter_negotiated(bin);
   failures += scenario_counter_replay_tcp(bin);
   failures += scenario_counter_replay_mtls(bin);
+  failures += scenario_counter_negotiated_mtls(bin);
   failures += scenario_register(bin);
   failures += scenario_gen_traces(bin);
   failures += scenario_validate_valid(bin);

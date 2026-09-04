@@ -151,3 +151,20 @@ TEST_CASE("tls: TLS 1.2-only server fails against the TLS 1.3-only client", "[tl
   REQUIRE_FALSE(t.has_value());
   REQUIRE(t.error().kind == ErrorKind::tls);
 }
+
+TEST_CASE("tls: oversized inbound protocol payload is rejected", "[tls][framing]") {
+  const auto& c = certs();
+  std::string oversized(65'536, 'x');
+  oversized.push_back('\n');
+  TlsTestServer srv(c.ca, c.server_cert, c.server_key,
+                    TLS1_3_VERSION, TLS1_3_VERSION, true,
+                    std::move(oversized));
+  auto t = connect_tls("127.0.0.1", static_cast<std::uint16_t>(srv.port()), default_opts());
+  REQUIRE(t.has_value());
+
+  const auto line = t.value()->recv_line();
+  REQUIRE_FALSE(line.has_value());
+  REQUIRE(line.error().kind == ErrorKind::io);
+  REQUIRE(line.error().message.find("65535-byte") != std::string::npos);
+  (void)t.value()->close();
+}

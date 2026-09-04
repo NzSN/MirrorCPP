@@ -185,6 +185,29 @@ TEST_CASE("framing: EOF mid-line drops the partial line with an io error", "[fra
   REQUIRE(line.error().message == "transport closed unexpectedly");
 }
 
+TEST_CASE("framing: oversized buffered inbound payload is rejected", "[framing]") {
+  std::string buf(detail::kMaxProtocolLineBytes + 1, 'x');
+  const auto line = detail::read_line_from_fd(
+      -1, buf, "transport closed unexpectedly");
+
+  REQUIRE_FALSE(line.has_value());
+  REQUIRE(line.error().kind == ErrorKind::io);
+  REQUIRE(line.error().message.find("65535-byte") != std::string::npos);
+  REQUIRE(buf.empty());
+}
+
+TEST_CASE("framing: newline after oversized inbound payload is rejected", "[framing]") {
+  std::string buf(detail::kMaxProtocolLineBytes + 1, 'x');
+  buf.push_back('\n');
+  const auto line = detail::read_line_from_fd(
+      -1, buf, "transport closed unexpectedly");
+
+  REQUIRE_FALSE(line.has_value());
+  REQUIRE(line.error().kind == ErrorKind::io);
+  REQUIRE(line.error().message.find("65535-byte") != std::string::npos);
+  REQUIRE(buf.empty());
+}
+
 // ---------------------------------------------------------------------------
 // Loopback TCP transport
 // ---------------------------------------------------------------------------

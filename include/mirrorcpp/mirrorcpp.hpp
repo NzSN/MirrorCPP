@@ -5,6 +5,7 @@
 #include "error.hpp"
 #include "value.hpp"
 #include "protocol.hpp"
+#include "model_interface.hpp"
 #include "transport.hpp"
 #include "registry.hpp"
 #include "spec.hpp"

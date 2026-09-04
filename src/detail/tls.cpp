@@ -291,9 +291,21 @@ Result<std::string> SslStream::read_line() {
   for (;;) {
     const auto nl = buf_.find('\n');
     if (nl != std::string::npos) {
+      if (nl > kMaxProtocolLineBytes) {
+        buf_.clear();
+        return unexpected(Error(
+            ErrorKind::io,
+            "protocol line exceeds 65535-byte UTF-8 payload limit"));
+      }
       std::string line = buf_.substr(0, nl);
       buf_.erase(0, nl + 1);
       return line;
+    }
+    if (buf_.size() > kMaxProtocolLineBytes) {
+      buf_.clear();
+      return unexpected(Error(
+          ErrorKind::io,
+          "protocol line exceeds 65535-byte UTF-8 payload limit"));
     }
     char chunk[4096];
     const int n = SSL_read(ssl_, chunk, sizeof chunk);

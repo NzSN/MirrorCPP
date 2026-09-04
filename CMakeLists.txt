@@ -115,6 +115,7 @@ endif()
 add_library(mirrorcpp
   src/value.cpp
   src/protocol.cpp
+  src/model_interface.cpp
   src/client.cpp
   src/registry.cpp
   src/spec.cpp

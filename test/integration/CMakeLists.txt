@@ -128,7 +128,8 @@ add_executable(mirrorcpp_real_mirror_test real_mirror_test.cpp)
 target_link_libraries(mirrorcpp_real_mirror_test PRIVATE
   mirrorcpp::mirrorcpp)
 target_include_directories(mirrorcpp_real_mirror_test PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR})
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/model-interface/counter/generated)
 target_compile_definitions(mirrorcpp_real_mirror_test PRIVATE
   MIRRORCPP_TEST_INTEGRATION_DIR="${MIRRORCPP_INTEGRATION_DIR}")
 add_test(NAME real_mirror_hourclock COMMAND mirrorcpp_real_mirror_test)

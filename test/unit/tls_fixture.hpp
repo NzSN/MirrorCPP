@@ -27,8 +27,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <signal.h>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 
 using namespace mirrorcpp;
 
@@ -149,9 +151,10 @@ const TestCerts& certs() {
 class TlsTestServer {
 public:
   TlsTestServer(const std::string& ca, const std::string& cert, const std::string& key,
-                int tls_min, int tls_max, bool require_client_cert)
+                int tls_min, int tls_max, bool require_client_cert,
+                std::optional<std::string> initial_payload = std::nullopt)
       : ca_(ca), cert_(cert), key_(key), tls_min_(tls_min), tls_max_(tls_max),
-        require_client_(require_client_cert) {
+        require_client_(require_client_cert), initial_payload_(std::move(initial_payload)) {
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     REQUIRE(listen_fd_ >= 0);
     const int one = 1;
@@ -194,6 +197,16 @@ private:
       SSL_set_fd(ssl, c);
       const int acc = SSL_accept(ssl);
       if (acc == 1) {
+        if (initial_payload_) {
+          std::size_t offset = 0;
+          while (offset < initial_payload_->size()) {
+            const int written = SSL_write(
+                ssl, initial_payload_->data() + offset,
+                static_cast<int>(initial_payload_->size() - offset));
+            if (written <= 0) break;
+            offset += static_cast<std::size_t>(written);
+          }
+        }
         // Echo lines back (line framing over TLS).
         char chunk[4096];
         std::string acc2;
@@ -220,6 +233,7 @@ private:
   int tls_min_ = TLS1_3_VERSION;
   int tls_max_ = TLS1_3_VERSION;
   bool require_client_ = true;
+  std::optional<std::string> initial_payload_;
   int listen_fd_ = -1;
   int port_ = 0;
   std::thread th_;

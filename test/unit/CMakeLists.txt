@@ -70,6 +70,23 @@ target_link_libraries(mirrorcpp_protocol_test PRIVATE
   Catch2::Catch2WithMain)
 catch_discover_tests(mirrorcpp_protocol_test)
 
+# Strict model-interface negotiation, exact adapter registry, and fail-closed
+# binding lifecycle tests.
+add_executable(mirrorcpp_model_interface_test model_interface_test.cpp)
+target_link_libraries(mirrorcpp_model_interface_test PRIVATE
+  mirrorcpp::mirrorcpp
+  Catch2::Catch2WithMain)
+catch_discover_tests(mirrorcpp_model_interface_test)
+
+# Compiler-produced mirrorcpp-v1 Counter port/binding behavior.
+add_executable(mirrorcpp_generated_model_interface_test generated_model_interface_test.cpp)
+target_link_libraries(mirrorcpp_generated_model_interface_test PRIVATE
+  mirrorcpp::mirrorcpp
+  Catch2::Catch2WithMain)
+target_include_directories(mirrorcpp_generated_model_interface_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/model-interface/counter/generated)
+catch_discover_tests(mirrorcpp_generated_model_interface_test)
+
 # Spec EXTENDS/INSTANCE closure resolution tests (design §5.5/§8).
 # Need the fixture dir (test/fixtures) and the vendored specs dir baked in.
 add_executable(mirrorcpp_spec_test spec_test.cpp)
@@ -93,4 +110,3 @@ target_link_libraries(mirrorcpp_golden_corpus_test PRIVATE
 target_compile_definitions(mirrorcpp_golden_corpus_test PRIVATE
   MIRRORCPP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 catch_discover_tests(mirrorcpp_golden_corpus_test)
-

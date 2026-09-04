@@ -160,6 +160,294 @@ Result<void> run_stepping_loop(Transport& transport, const StateComputer& comput
   }
 }
 
+Error local_model_interface_error(std::string code, std::string message) {
+  return Error(ErrorKind::model_interface, std::move(message), std::move(code));
+}
+
+class PrefixedTransport final : public Transport {
+ public:
+  PrefixedTransport(Transport& inner, std::string first)
+      : inner_(inner), first_(std::move(first)) {}
+
+  Result<void> send_line(std::string_view line) override {
+    return inner_.send_line(line);
+  }
+  Result<std::string> recv_line() override {
+    if (first_) {
+      std::string line = std::move(*first_);
+      first_.reset();
+      return line;
+    }
+    return inner_.recv_line();
+  }
+  Result<long> close() override { return inner_.close(); }
+  bool async_capable() const noexcept override { return inner_.async_capable(); }
+
+ private:
+  Transport& inner_;
+  std::optional<std::string> first_;
+};
+
+struct PreparedCompiledAdapter {
+  ModelInterfaceVerifyRequest request;
+  CompiledAdapterKey key;
+  const AdapterFactory* factory = nullptr;
+  const std::optional<AdapterFactory>* fallback_factory = nullptr;
+};
+
+Result<PreparedCompiledAdapter> prepare_compiled_adapter(
+    const CompiledAdapterSelection& selection) {
+  if (selection.target_profile != mirrorcpp_target_profile) {
+    return unexpected(local_model_interface_error(
+        "target_profile_mismatch",
+        "negotiated runner requires target profile " +
+            std::string(mirrorcpp_target_profile)));
+  }
+  if (selection.state_computer_contract_version != state_computer_contract_version) {
+    return unexpected(local_model_interface_error(
+        "state_computer_contract_mismatch",
+        "negotiated runner requires StateComputer contract " +
+            std::string(state_computer_contract_version)));
+  }
+  if (selection.registry == nullptr) {
+    return unexpected(local_model_interface_error(
+        "adapter_not_registered", "compiled adapter registry is null"));
+  }
+  auto request = make_verify_request(selection.metadata, selection.policy);
+  if (!request) return unexpected(request.error());
+  CompiledAdapterKey key{
+      request->expected_semantic_digest,
+      selection.adapter_id,
+      selection.target_profile,
+      selection.state_computer_contract_version,
+  };
+  auto factory = selection.registry->resolve(key);
+  if (!factory) return unexpected(factory.error());
+  return PreparedCompiledAdapter{
+      std::move(*request), std::move(key), *factory, &selection.fallback_factory};
+}
+
+Result<const AdapterFactory*> authorize_compiled_reply(
+    const DecodedModelInterfaceRegistrationReply& decoded,
+    const PreparedCompiledAdapter& prepared) {
+  if (const auto* protocol = std::get_if<ProtocolError>(&decoded.message)) {
+    return unexpected(Error(ErrorKind::protocol, protocol->error));
+  }
+  if (const auto* registration = std::get_if<RegisterError>(&decoded.message)) {
+    if (decoded.failure && decoded.failure->expected_semantic_digest &&
+        *decoded.failure->expected_semantic_digest != prepared.key.semantic_digest) {
+      return unexpected(local_model_interface_error(
+          "negotiation_status_unexpected",
+          "register_error expectedSemanticDigest does not match the request"));
+    }
+    if (decoded.failure) {
+      return unexpected(Error(
+          ErrorKind::registration, registration->error, decoded.failure->code));
+    }
+    return unexpected(Error(ErrorKind::registration, registration->error));
+  }
+  const auto* validated = std::get_if<SpecValidated>(&decoded.message);
+  if (validated == nullptr) {
+    return unexpected(local_model_interface_error(
+        "negotiation_status_unexpected",
+        "expected spec_validated registration result"));
+  }
+  if (!validated->is_valid()) {
+    const std::string detail = validated->invalid_text()
+        ? *validated->invalid_text() : std::string{};
+    return unexpected(Error(
+        ErrorKind::spec_invalid,
+        "spec was not validated: " + detail));
+  }
+  if (!decoded.reply) {
+    if (prepared.request.policy != NegotiationPolicy::prefer) {
+      return unexpected(local_model_interface_error(
+          "negotiation_missing", "model-interface negotiation reply is missing"));
+    }
+    if (prepared.fallback_factory == nullptr || !*prepared.fallback_factory) {
+      return unexpected(local_model_interface_error(
+          "legacy_fallback_unavailable",
+          "old server requires an explicit fallback factory under prefer"));
+    }
+    return &prepared.fallback_factory->value();
+  }
+  switch (decoded.reply->status) {
+    case ModelInterfaceStatus::matched:
+      if (!decoded.reply->semantic_digest ||
+          *decoded.reply->semantic_digest != prepared.key.semantic_digest) {
+        return unexpected(local_model_interface_error(
+            "interface_digest_mismatch",
+            "server semantic digest does not match the compiled interface"));
+      }
+      return prepared.factory;
+    case ModelInterfaceStatus::unsupported:
+    case ModelInterfaceStatus::unavailable:
+      if (prepared.request.policy != NegotiationPolicy::prefer) {
+        return unexpected(local_model_interface_error(
+            decoded.reply->status == ModelInterfaceStatus::unsupported
+                ? "descriptor_schema_unsupported"
+                : "negotiation_status_unexpected",
+            "model-interface negotiation is unavailable"));
+      }
+      if (prepared.fallback_factory == nullptr || !*prepared.fallback_factory) {
+        return unexpected(local_model_interface_error(
+            "legacy_fallback_unavailable",
+            "preferred negotiation requires an explicit fallback factory"));
+      }
+      return &prepared.fallback_factory->value();
+    case ModelInterfaceStatus::mismatch:
+      return unexpected(local_model_interface_error(
+          "interface_digest_mismatch", "model-interface digest mismatch"));
+    case ModelInterfaceStatus::resolved:
+    case ModelInterfaceStatus::not_modified:
+    case ModelInterfaceStatus::too_large:
+      return unexpected(local_model_interface_error(
+          "negotiation_status_unexpected",
+          "descriptor-mode reply is invalid for compiled verification"));
+  }
+  return unexpected(local_model_interface_error(
+      "negotiation_status_unexpected", "unknown model-interface reply"));
+}
+
+Result<void> dispose_binding(LocalBinding& binding) {
+  if (!binding.dispose) {
+    return unexpected(local_model_interface_error(
+        "adapter_dispose_failed", "binding has no dispose callback"));
+  }
+  try {
+    auto result = binding.dispose();
+    if (!result) {
+      return unexpected(local_model_interface_error(
+          "adapter_dispose_failed", result.error().message));
+    }
+    return {};
+  } catch (const std::exception& error) {
+    return unexpected(local_model_interface_error(
+        "adapter_dispose_failed",
+        std::string("adapter disposal threw: ") + error.what()));
+  } catch (...) {
+    return unexpected(local_model_interface_error(
+        "adapter_dispose_failed", "adapter disposal threw"));
+  }
+}
+
+template <class Registration>
+Result<void> run_compiled_negotiated(Transport& transport,
+                                     const ApalacheConfig& config,
+                                     const Registration& registration,
+                                     const CompiledAdapterSelection& selection) {
+  auto prepared = prepare_compiled_adapter(selection);
+  if (!prepared) return unexpected(prepared.error());
+  auto encoded = encode_model_interface_registration(registration, prepared->request);
+  if (!encoded) return unexpected(encoded.error());
+
+  PhaseGuard guard;
+  if (auto result = guard.sent(ClientMessage{registration}); !result) {
+    return unexpected(result.error());
+  }
+  if (auto sent = transport.send_line(*encoded); !sent) {
+    (void)transport.close();
+    return unexpected(sent.error());
+  }
+  auto first = transport.recv_line();
+  if (!first) {
+    (void)transport.close();
+    return unexpected(first.error());
+  }
+  auto decoded = decode_model_interface_registration_reply(*first);
+  if (!decoded) {
+    (void)transport.close();
+    return unexpected(decoded.error());
+  }
+  auto factory = authorize_compiled_reply(*decoded, *prepared);
+  if (!factory) {
+    (void)transport.close();
+    return unexpected(factory.error());
+  }
+
+  Result<LocalBinding> created = unexpected(local_model_interface_error(
+      "adapter_factory_failed", "adapter factory did not run"));
+  try {
+    created = (**factory)(config);
+  } catch (const std::exception& error) {
+    (void)transport.close();
+    return unexpected(local_model_interface_error(
+        "adapter_factory_failed",
+        std::string("adapter factory threw: ") + error.what()));
+  } catch (...) {
+    (void)transport.close();
+    return unexpected(local_model_interface_error(
+        "adapter_factory_failed", "adapter factory threw"));
+  }
+  if (!created) {
+    (void)transport.close();
+    return unexpected(local_model_interface_error(
+        "adapter_factory_failed", created.error().message));
+  }
+  LocalBinding binding = std::move(*created);
+
+  auto fail_after_binding = [&](Error error) -> Result<void> {
+    auto cleanup = dispose_binding(binding);
+    (void)transport.close();
+    (void)cleanup;
+    return unexpected(std::move(error));
+  };
+  if (binding.semantic_digest != prepared->key.semantic_digest) {
+    return fail_after_binding(local_model_interface_error(
+        "binding_digest_mismatch", "binding digest does not match adapter key"));
+  }
+  if (!binding.computer) {
+    return fail_after_binding(local_model_interface_error(
+        "adapter_factory_failed", "binding has no StateComputer"));
+  }
+  if (!binding.assert_compatible_config) {
+    return fail_after_binding(local_model_interface_error(
+        "binding_config_mismatch", "binding has no configuration check"));
+  }
+  try {
+    auto compatible = binding.assert_compatible_config(config);
+    if (!compatible) {
+      return fail_after_binding(local_model_interface_error(
+          "binding_config_mismatch", compatible.error().message));
+    }
+  } catch (const std::exception& error) {
+    return fail_after_binding(local_model_interface_error(
+        "binding_config_mismatch",
+        std::string("binding configuration check threw: ") + error.what()));
+  } catch (...) {
+    return fail_after_binding(local_model_interface_error(
+        "binding_config_mismatch", "binding configuration check threw"));
+  }
+
+  PrefixedTransport prefixed(transport, *first);
+  Result<void> primary;
+  try {
+    primary = run_stepping_loop(prefixed, binding.computer, guard);
+  } catch (const ModelInterfaceBindingError& error) {
+    auto cleanup = dispose_binding(binding);
+    (void)transport.close();
+    (void)cleanup;
+    return unexpected(local_model_interface_error(error.code(), error.what()));
+  } catch (const std::exception& error) {
+    auto cleanup = dispose_binding(binding);
+    (void)transport.close();
+    (void)cleanup;
+    return unexpected(local_model_interface_error(
+        "adapter_failure", std::string("StateComputer threw: ") + error.what()));
+  } catch (...) {
+    auto cleanup = dispose_binding(binding);
+    (void)transport.close();
+    (void)cleanup;
+    return unexpected(local_model_interface_error(
+        "adapter_failure", "StateComputer threw an unknown exception"));
+  }
+  auto cleanup = dispose_binding(binding);
+  (void)transport.close();
+  if (!primary) return primary;
+  if (!cleanup) return cleanup;
+  return {};
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -195,6 +483,24 @@ Result<void> run_client(Transport& transport, const ApalacheConfig& config,
   auto sr = send_message(transport, reg);
   if (!sr) return unexpected(sr.error());
   return run_stepping_loop(transport, compute, guard);
+}
+
+Result<void> run_client_with_traces_negotiated(
+    Transport& transport, const ApalacheConfig& config,
+    const std::vector<std::string>& itf_trace_paths,
+    const CompiledAdapterSelection& selection) {
+  return run_compiled_negotiated(
+      transport, config, RegisterTraces{config, itf_trace_paths}, selection);
+}
+
+Result<void> run_client_negotiated(
+    Transport& transport, const ApalacheConfig& config,
+    const TraceGenerationConfig& trace_config,
+    const CompiledAdapterSelection& selection,
+    std::optional<ApalacheSpec> inline_spec) {
+  return run_compiled_negotiated(
+      transport, config,
+      Register{config, trace_config, std::move(inline_spec)}, selection);
 }
 
 // ---------------------------------------------------------------------------

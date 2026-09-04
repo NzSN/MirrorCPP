@@ -14,6 +14,7 @@
 #include <mirrorcpp/value.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,6 +24,11 @@
 #include <vector>
 
 namespace mirrorcpp {
+
+// Shared replay seam used by handwritten and generated bindings.
+using StateComputer = std::function<State(std::string_view action,
+                                          const State& params_or_state,
+                                          const State& prev_state)>;
 
 // ---------------------------------------------------------------------------
 // Status enums (§3.2)

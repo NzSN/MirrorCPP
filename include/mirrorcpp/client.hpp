@@ -24,6 +24,7 @@
 #define MIRRORCPP_CLIENT_HPP
 
 #include <mirrorcpp/error.hpp>
+#include <mirrorcpp/model_interface.hpp>
 #include <mirrorcpp/protocol.hpp>
 #include <mirrorcpp/transport.hpp>
 #include <mirrorcpp/value.hpp>
@@ -50,10 +51,6 @@ namespace mirrorcpp {
 //     state var, omit paramVars, include action_taken when the spec defines it).
 //   - prev_state:    the state the computer returned for the previous step
 //                    (empty {} on the first call).
-using StateComputer = std::function<State(std::string_view action,
-                                          const State& params_or_state,
-                                          const State& prev_state)>;
-
 // ---------------------------------------------------------------------------
 // Stepping flows (block until all_steps_done / mismatch / error) — §5.6
 // ---------------------------------------------------------------------------
@@ -68,6 +65,19 @@ Result<void> run_client_with_traces(Transport& transport, const ApalacheConfig& 
 Result<void> run_client(Transport& transport, const ApalacheConfig& config,
                         const TraceGenerationConfig& trace_config, StateComputer compute,
                         std::optional<ApalacheSpec> inline_spec = std::nullopt);
+
+// Compiled model-interface verification. The exact local adapter factory is
+// selected before registration but invoked only after a validated `matched`.
+Result<void> run_client_with_traces_negotiated(
+    Transport& transport, const ApalacheConfig& config,
+    const std::vector<std::string>& itf_trace_paths,
+    const CompiledAdapterSelection& selection);
+
+Result<void> run_client_negotiated(
+    Transport& transport, const ApalacheConfig& config,
+    const TraceGenerationConfig& trace_config,
+    const CompiledAdapterSelection& selection,
+    std::optional<ApalacheSpec> inline_spec = std::nullopt);
 
 // register_explore flow: mirror-driven symbolic exploration; next_step carries
 // the full expected state (§3.2).

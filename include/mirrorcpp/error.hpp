@@ -38,6 +38,7 @@ enum class ErrorKind {
   tls,           // handshake/verification/pin failure
   registry,      // discovery/connect-from-registry exhausted candidates
   spec_source,   // spec_from_files: missing/ambiguous module
+  model_interface, // local model-interface codec/selection/binding failure
 };
 
 // Human-readable name for an ErrorKind (for diagnostics, CLI exit messages).
@@ -53,6 +54,7 @@ inline const char* error_kind_name(ErrorKind k) noexcept {
     case ErrorKind::tls:           return "tls";
     case ErrorKind::registry:      return "registry";
     case ErrorKind::spec_source:   return "spec_source";
+    case ErrorKind::model_interface: return "model_interface";
   }
   return "unknown";
 }
@@ -60,6 +62,7 @@ inline const char* error_kind_name(ErrorKind k) noexcept {
 struct Error {
   ErrorKind kind = ErrorKind::io;
   std::string message;  // human-readable; includes mirror text when present
+  std::optional<std::string> code; // stable model-interface/server code
 
   // Populated only when kind == step_mismatch:
   std::optional<State> expected;
@@ -71,6 +74,8 @@ struct Error {
 
   Error() = default;
   Error(ErrorKind k, std::string m) : kind(k), message(std::move(m)) {}
+  Error(ErrorKind k, std::string m, std::string stable_code)
+      : kind(k), message(std::move(m)), code(std::move(stable_code)) {}
   Error(ErrorKind k, std::string m, std::optional<State> e, std::optional<State> a,
         std::shared_ptr<const std::vector<DiffHint>> h = {})
       : kind(k), message(std::move(m)), expected(std::move(e)), actual(std::move(a)),

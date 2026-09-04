@@ -25,6 +25,8 @@ TEST_CASE("ErrorKind has the §4.3 enumerators", "[error]") {
   REQUIRE(error_kind_name(ErrorKind::tls) == std::string("tls"));
   REQUIRE(error_kind_name(ErrorKind::registry) == std::string("registry"));
   REQUIRE(error_kind_name(ErrorKind::spec_source) == std::string("spec_source"));
+  REQUIRE(error_kind_name(ErrorKind::model_interface) ==
+          std::string("model_interface"));
 }
 
 TEST_CASE("Error default-constructs and takes kind+message", "[error]") {

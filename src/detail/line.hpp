@@ -39,9 +39,21 @@ inline Result<std::string> read_line_from_fd(long fd, std::string& buf,
   for (;;) {
     auto nl = buf.find('\n');
     if (nl != std::string::npos) {
+      if (nl > kMaxProtocolLineBytes) {
+        buf.clear();
+        return unexpected(Error(
+            ErrorKind::io,
+            "protocol line exceeds 65535-byte UTF-8 payload limit"));
+      }
       std::string line = buf.substr(0, nl);
       buf.erase(0, nl + 1);
       return line;
+    }
+    if (buf.size() > kMaxProtocolLineBytes) {
+      buf.clear();
+      return unexpected(Error(
+          ErrorKind::io,
+          "protocol line exceeds 65535-byte UTF-8 payload limit"));
     }
     char chunk[kLineChunkSize];
 #ifdef _WIN32
