@@ -1,6 +1,9 @@
 # MirrorCPP Design
 
-**Status:** Design proposal (no implementation yet)
+**Status:** Implemented client; this document retains the original design rationale.
+Current APIs are in the [README](../README.md) and [client header](../include/mirrorcpp/client.hpp).
+`query_job_result` preserves terminal outcomes; `query_job` is the compatible
+status projection. Gate integration belongs to [MirrorGate](../../MirrorGate/integrations/mirrorcpp/README.md).
 **Audience:** Contributors to MirrorCPP
 **Upstream protocol owner:** [ModelMirrors](https://github.com/NzSN/ModelMirrors)
 **Sibling clients:** [MirrorRust](https://github.com/NzSN/MirrorRust) (Rust), [MirrorECMA](https://github.com/NzSN/MirrorECMA) (TypeScript)
@@ -602,16 +605,19 @@ Result<ValidateVerdict> run_client_validate(Transport&, const ApalacheConfig&, l
 // until eviction (C18). JobPhase::unknown = never submitted/evicted — never retry-loop
 // on it (C21). A full job queue rejects at submit with register_error →
 // Error{registration} (C22). The validate outcome reuses SpecValidated — identical to
-// the sync verdict for the same config (C20). The borrowed transport is NEVER closed
-// by these calls.
+// the sync verdict for the same config (C20). Successful calls and registration
+// rejection retain the borrowed connection; transport/protocol/correlation failures
+// close it as poisoned.
 Result<JobAccepted> submit_validate_async(Transport&, const ApalacheConfig&, long long bound,
                                           std::optional<ApalacheSpec> = std::nullopt);
 Result<JobAccepted> submit_trace_gen_async(Transport&, const ApalacheConfig&,
                                            const TraceGenerationConfig&,
                                            std::optional<std::string> dest_path = std::nullopt,
                                            std::optional<ApalacheSpec> = std::nullopt);
-Result<JobStatus>   query_job(Transport&, std::string_view job_id);
 using AwaitResult = std::variant<JobStatus, JobResult>;
+Result<AwaitResult> query_job_result(Transport&, std::string_view job_id);
+// Compatibility projection: a terminal result becomes done or failed.
+Result<JobStatus>   query_job(Transport&, std::string_view job_id);
 Result<AwaitResult> await_job(Transport&, std::string_view job_id,
                               std::optional<long long> timeout_secs = std::nullopt);
 Result<AwaitResult> cancel_job(Transport&, std::string_view job_id);

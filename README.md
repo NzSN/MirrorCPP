@@ -1,5 +1,10 @@
 # MirrorCPP
 
+See the [framework map](../Mirrors/Docs/framework-map.md) for client capabilities.
+Restricted execution uses the [Gate C++ SDK](../MirrorGate/sdk/cpp/README.md)
+and [source integration](../MirrorGate/integrations/mirrorcpp/README.md), without
+a mandatory Node evaluator.
+
 A C++23 client library for [ModelMirrors](https://github.com/NzSN/ModelMirrors),
 the conformance checker that uses [Apalache](https://github.com/apalache-mc/apalache)
 to check a client-implemented state machine against a TLA+ specification, state
