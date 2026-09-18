@@ -72,7 +72,12 @@ def handle_message(msg):
             JOBS[jid] = {"phase": "running", "kind": kind, "result": None}
         return {"proto_step": "job_accepted", "jobId": jid, "kind": kind}
     if step == "query_job":
-        return job_status(msg.get("jobId", ""))
+        jid = msg.get("jobId", "")
+        with LOCK:
+            result = JOBS.get(jid, {}).get("result")
+        if result is not None:
+            return {"proto_step": "job_result", "jobId": jid, "outcome": result}
+        return job_status(jid)
     if step == "await_job":
         jid = msg.get("jobId", "")
         with LOCK:

@@ -138,14 +138,18 @@ Result<JobAccepted> submit_trace_gen_async(Transport& transport,
                                            std::optional<std::string> dest_path = std::nullopt,
                                            std::optional<ApalacheSpec> inline_spec = std::nullopt);
 
+using AwaitResult = std::variant<JobStatus, JobResult>;
+
 // query_job: poll the current phase. JobPhase::unknown means never-submitted
 // or evicted (C21) — do NOT retry-loop on it expecting the job to appear.
+// Full server reply, including a retained terminal outcome.
+Result<AwaitResult> query_job_result(Transport& transport, std::string_view job_id);
+// Compatibility projection: terminal result maps to done/failed without closing.
 Result<JobStatus> query_job(Transport& transport, std::string_view job_id);
 
 // The result of await_job / cancel_job: JobStatus (non-terminal) or
 // JobResult (terminal). Terminal results are idempotent — re-awaiting a
 // finished job returns the same JobResult until eviction (C18).
-using AwaitResult = std::variant<JobStatus, JobResult>;
 
 // await_job (C18 long-polling): without timeout_secs, blocks until the job
 // terminates; with timeout_secs, a timeout returns JobStatus (non-terminal),

@@ -18,6 +18,9 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <fstream>
+#include <cstdlib>
+#include <nlohmann/json.hpp>
 #include <string>
 
 using namespace mirrorcpp;
@@ -85,6 +88,10 @@ ServerGuard start(const char* scenario, int nconns = 1) {
 
 std::unique_ptr<Transport> connect(int port) {
   auto t = connect_tcp("127.0.0.1", static_cast<std::uint16_t>(port));
+  for (int attempt = 0; !t && attempt < 100; ++attempt) {
+    ::usleep(20000);
+    t = connect_tcp("127.0.0.1", static_cast<std::uint16_t>(port));
+  }
   REQUIRE(t.has_value());
   return std::move(*t);
 }
@@ -232,4 +239,78 @@ TEST_CASE("async: job control is cross-connection (C17)", "[integration][async]"
 
   (void)a->close();
   (void)b->close();
+}
+
+TEST_CASE("async: query preserves terminal payload and compatibility phase", "[integration][async]") {
+  auto srv = start("validate");
+  auto t = connect(srv.port);
+  auto job = submit_validate_async(*t, cfg(), 3);
+  REQUIRE(job.has_value());
+  auto done = await_job(*t, job->job_id);
+  REQUIRE(done.has_value());
+  auto full = query_job_result(*t, job->job_id);
+  REQUIRE(full.has_value());
+  CHECK(std::holds_alternative<JobResult>(*full));
+  auto phase = query_job(*t, job->job_id);
+  REQUIRE(phase.has_value());
+  CHECK(phase->phase == JobPhase::done);
+  (void)t->close();
+}
+
+
+namespace {
+class VectorTransport final : public Transport {
+ public:
+  std::string reply;
+  bool closed = false;
+  bool fail_send = false;
+  bool async_capable() const noexcept override { return true; }
+  Result<void> send_line(std::string_view) override {
+    if (fail_send) return std::unexpected(Error(ErrorKind::io, "send failed"));
+    return {};
+  }
+  Result<std::string> recv_line() override { return reply; }
+  Result<long> close() override { closed = true; return 0; }
+};
+}
+
+TEST_CASE("async: shared reply conformance vectors", "[integration][async]") {
+  const char* path = std::getenv("MIRRORS_CLIENT_CONFORMANCE");
+  std::ifstream input(path ? std::filesystem::path(path) :
+      std::filesystem::path(MIRRORCPP_TEST_INTEGRATION_DIR) / "../fixtures/client-conformance/async-replies.json");
+  REQUIRE(input.good());
+  nlohmann::json corpus;
+  input >> corpus;
+  for (const auto& entry : corpus.at("cases")) {
+    INFO(entry.at("name"));
+    VectorTransport transport;
+    transport.reply = entry.at("reply").dump();
+    const auto& request = entry.at("request");
+    const std::string tag = request.at("proto_step");
+    bool accepted;
+    if (tag == "register_validate_async") {
+      accepted = submit_validate_async(transport, cfg(), 3).has_value();
+    } else if (tag == "query_job") {
+      accepted = query_job_result(transport, request.at("jobId").get<std::string>()).has_value();
+    } else {
+      accepted = await_job(transport, request.at("jobId").get<std::string>(), 1).has_value();
+    }
+    CHECK(accepted == entry.at("accept").get<bool>());
+    CHECK(transport.closed == !accepted);
+  }
+}
+
+TEST_CASE("async: malformed replies close the borrowed connection", "[integration][async]") {
+  VectorTransport transport;
+  transport.reply = "{bad json";
+  CHECK_FALSE(await_job(transport, "job-1").has_value());
+  CHECK(transport.closed);
+}
+
+TEST_CASE("registration send failure closes the borrowed transport", "[integration][async]") {
+  VectorTransport transport;
+  transport.fail_send = true;
+  auto result = run_client_validate(transport, cfg(), 3);
+  CHECK_FALSE(result.has_value());
+  CHECK(transport.closed);
 }

@@ -225,3 +225,33 @@ ctest --test-dir build-asan
 
 See the upstream projects' licenses; MirrorCPP is published under the same
 terms as [ModelMirrors](https://github.com/NzSN/ModelMirrors).
+
+## Current conformance and remote operation
+
+The normative contract is the [Mirrors client guide](../Mirrors/Docs/client-implementation-guide.md).
+For server setup and certificate/remote-file rules, see the
+[remote server runbook](../Mirrors/Docs/remote-server-guide.md). Inline model
+sources and their dependency closure are separate from server-visible trace
+paths. A remote `destPath` never names a local client directory. Consume inline
+trace results on network connections; `TRACE_RESULT_TOO_LARGE` is an explicit
+backend failure, not permission to launch Apalache directly as a fallback.
+
+Server async jobs and asynchronous SUT operations are different features. The
+submitting connection owns its jobs: other connections can query or await them,
+but disconnecting the owner cancels and evicts them. Job IDs are not durable
+handles. Await timeouts return current status; stop polling cancelled or unknown
+jobs. Logical cancellation can precede physical backend cleanup.
+
+Shared async reply fixtures live under the client's test fixtures and originate
+in `Mirrors/test/client-conformance/async-replies.json`. The focused acceptance
+runner is `APALACHE_MC=/path/to/apalache-mc bash ../Mirrors/tools/interop/clients.sh`.
+It requires live dependencies and checks fixture copies before running all three
+clients. Unit tests do not prove runtime heap leak-freedom.
+
+`query_job_result` returns either `JobStatus` or `JobResult`, preserving terminal
+outcomes. Existing `query_job` remains a status-only compatibility projection;
+terminal success maps to `done`, infrastructure failure to `failed`. Async
+exchanges verify requested IDs and submission kinds and close a poisoned
+connection. The caller must serialize exchanges on a borrowed transport.
+Compiled model-interface verification remains supported; a generic Gate facade
+and dynamic descriptor interpreter are not added by this change.

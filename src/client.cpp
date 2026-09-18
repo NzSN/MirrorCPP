@@ -463,7 +463,7 @@ Result<void> run_client_with_traces(Transport& transport, const ApalacheConfig& 
   RegisterTraces reg{config, itf_trace_paths};
   if (auto g = guard.sent(reg); !g) return unexpected(g.error());
   auto sr = send_message(transport, reg);
-  if (!sr) return unexpected(sr.error());
+  if (!sr) { (void)transport.close(); return unexpected(sr.error()); }
   return run_stepping_loop(transport, compute, guard);
 }
 
@@ -481,7 +481,7 @@ Result<void> run_client(Transport& transport, const ApalacheConfig& config,
   Register reg{config, trace_config, std::move(inline_spec)};
   if (auto g = guard.sent(reg); !g) return unexpected(g.error());
   auto sr = send_message(transport, reg);
-  if (!sr) return unexpected(sr.error());
+  if (!sr) { (void)transport.close(); return unexpected(sr.error()); }
   return run_stepping_loop(transport, compute, guard);
 }
 
@@ -517,7 +517,7 @@ Result<GenTracesResult> run_client_gen_traces(Transport& transport,
                        std::move(inline_spec)};
   if (auto g = guard.sent(reg); !g) return unexpected(g.error());
   auto sr = send_message(transport, reg);
-  if (!sr) return unexpected(sr.error());
+  if (!sr) { (void)transport.close(); return unexpected(sr.error()); }
 
   auto line = transport.recv_line();
   if (!line) {
@@ -564,7 +564,7 @@ Result<ValidateVerdict> run_client_validate(Transport& transport, const Apalache
   RegisterValidate reg{config, bound, std::move(inline_spec)};
   if (auto g = guard.sent(reg); !g) return unexpected(g.error());
   auto sr = send_message(transport, reg);
-  if (!sr) return unexpected(sr.error());
+  if (!sr) { (void)transport.close(); return unexpected(sr.error()); }
 
   auto line = transport.recv_line();
   if (!line) {
@@ -629,7 +629,7 @@ Result<void> run_client_explore(Transport& transport, const ApalacheSpec& spec,
   PhaseGuard guard;
   if (auto g = guard.sent(msg); !g) return unexpected(g.error());
   auto sr = send_message(transport, msg);
-  if (!sr) return unexpected(sr.error());
+  if (!sr) { (void)transport.close(); return unexpected(sr.error()); }
   return run_stepping_loop(transport, compute, guard);
 }
 
@@ -842,6 +842,8 @@ Result<MirrorMessage> job_exchange(Transport& transport, const ClientMessage& ms
     (void)transport.close();
     return unexpected(std::move(error));
   };
+  if (!transport.async_capable())
+    return unexpected(Error(ErrorKind::protocol, "async jobs require a server-mode transport"));
   PhaseGuard guard;
   if (auto g = guard.sent(msg); !g) return abort(g.error());
   auto sr = send_message(transport, msg);
@@ -855,6 +857,19 @@ Result<MirrorMessage> job_exchange(Transport& transport, const ClientMessage& ms
     return unexpected(Error(ErrorKind::registration, re->error));   // e.g. queue full (C22)
   if (auto* pe = std::get_if<ProtocolError>(&*decoded))
     return abort(Error(ErrorKind::protocol, pe->error));
+  const std::string* expected_id = std::visit([](const auto& request) -> const std::string* {
+    using T = std::decay_t<decltype(request)>;
+    if constexpr (std::is_same_v<T, QueryJob> || std::is_same_v<T, AwaitJob> || std::is_same_v<T, CancelJob>)
+      return &request.job_id;
+    else return nullptr;
+  }, msg);
+  if (expected_id) {
+    const std::string* actual_id = nullptr;
+    if (auto* status = std::get_if<JobStatus>(&*decoded)) actual_id = &status->job_id;
+    if (auto* result = std::get_if<JobResult>(&*decoded)) actual_id = &result->job_id;
+    if (!actual_id || *actual_id != *expected_id)
+      return abort(Error(ErrorKind::protocol, "async reply jobId mismatch"));
+  }
   return decoded;
 }
 
@@ -864,7 +879,13 @@ Result<JobAccepted> submit_async(Transport& transport, const ClientMessage& msg)
                             "async jobs require a server-mode (TCP/TLS) transport"));
   auto r = job_exchange(transport, msg);
   if (!r) return unexpected(r.error());
-  if (auto* ja = std::get_if<JobAccepted>(&*r)) return *ja;
+  if (auto* ja = std::get_if<JobAccepted>(&*r)) {
+    const auto expected = std::holds_alternative<RegisterValidateAsync>(msg)
+        ? JobKind::validate : JobKind::gen_traces;
+    if (ja->kind == expected) return *ja;
+    (void)transport.close();
+    return unexpected(Error(ErrorKind::protocol, "async reply job kind mismatch"));
+  }
   auto error = unexpected_tag_error(*r, "job_accepted");
   (void)transport.close();
   return unexpected(std::move(error));
@@ -900,13 +921,18 @@ Result<JobAccepted> submit_trace_gen_async(Transport& transport,
                                             std::move(inline_spec)});
 }
 
+Result<AwaitResult> query_job_result(Transport& transport, std::string_view job_id) {
+  return classify_job_reply(transport,
+      job_exchange(transport, QueryJob{std::string(job_id)}), "job_result | job_status");
+}
+
 Result<JobStatus> query_job(Transport& transport, std::string_view job_id) {
-  auto r = job_exchange(transport, QueryJob{std::string(job_id)});
-  if (!r) return unexpected(r.error());
-  if (auto* js = std::get_if<JobStatus>(&*r)) return *js;
-  auto error = unexpected_tag_error(*r, "job_status");
-  (void)transport.close();
-  return unexpected(std::move(error));
+  auto reply = query_job_result(transport, job_id);
+  if (!reply) return unexpected(reply.error());
+  if (auto* status = std::get_if<JobStatus>(&*reply)) return *status;
+  const auto& result = std::get<JobResult>(*reply);
+  return JobStatus{result.job_id, std::holds_alternative<std::string>(result.outcome.value)
+      ? JobPhase::failed : JobPhase::done};
 }
 
 Result<AwaitResult> await_job(Transport& transport, std::string_view job_id,
