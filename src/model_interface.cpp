@@ -210,6 +210,92 @@ Result<void> validate_model_type(const json& value, std::size_t depth,
                              std::string(path) + ": unknown model type " + kind));
 }
 
+// Keep the data-only map-key grammar aligned with Codec.ModelInterfaceJson.
+// The target emitter's unsupported-path check is separate from wire decoding.
+Result<void> validate_literal(const json& value, std::size_t depth,
+                               std::string_view path) {
+  if (depth >= 128) {
+    return unexpected(mi_error("negotiation_status_unexpected",
+                               std::string(path) + ": literal depth exceeds 128"));
+  }
+  if (!value.is_object()) {
+    return unexpected(mi_error("negotiation_status_unexpected",
+                               std::string(path) + ": canonical literal expected"));
+  }
+  auto kind_result = string_field(value, "kind", path);
+  if (!kind_result) return unexpected(kind_result.error());
+  const auto& kind = *kind_result;
+  if (kind == "null") return exact_object(value, path, {"kind"}, {"kind"});
+  if (kind == "int" || kind == "bool" || kind == "str") {
+    if (auto result = exact_object(value, path, {"kind", "value"},
+                                   {"kind", "value"}); !result) return result;
+    const auto& payload = value.at("value");
+    if (kind == "bool") {
+      if (payload.is_boolean()) return {};
+      return unexpected(mi_error("negotiation_status_unexpected",
+                                 std::string(path) + ": Boolean expected"));
+    }
+    auto text = string_field(value, "value", path);
+    if (!text) return unexpected(text.error());
+    if (kind == "str") return {};
+    const std::size_t begin = text->starts_with('-') ? 1 : 0;
+    if (begin == text->size() ||
+        !std::all_of(text->begin() + begin, text->end(),
+                     [](char c) { return c >= '0' && c <= '9'; })) {
+      return unexpected(mi_error("negotiation_status_unexpected",
+                                 std::string(path) + ": decimal integer string expected"));
+    }
+    return {};
+  }
+  if (kind == "set" || kind == "seq" || kind == "tuple") {
+    if (auto result = exact_object(value, path, {"kind", "values"},
+                                   {"kind", "values"}); !result) return result;
+    const auto& values = value.at("values");
+    if (!values.is_array()) {
+      return unexpected(mi_error("negotiation_status_unexpected",
+                                 std::string(path) + ": literal values array expected"));
+    }
+    for (const auto& item : values) {
+      if (auto result = validate_literal(item, depth + 1, path); !result) return result;
+    }
+    return {};
+  }
+  if (kind == "record" || kind == "map") {
+    const char* list_name = kind == "record" ? "fields" : "entries";
+    if (auto result = exact_object(value, path, {"kind", list_name},
+                                   {"kind", list_name}); !result) return result;
+    const auto& entries = value.at(list_name);
+    if (!entries.is_array()) {
+      return unexpected(mi_error("negotiation_status_unexpected",
+                                 std::string(path) + ": literal entries array expected"));
+    }
+    for (const auto& entry : entries) {
+      const char* key_name = kind == "record" ? "name" : "key";
+      if (auto result = exact_object(entry, path, {key_name, "value"},
+                                     {key_name, "value"}); !result) return result;
+      if (kind == "record") {
+        auto name = string_field(entry, "name", path);
+        if (!name) return unexpected(name.error());
+      } else {
+        if (auto result = validate_literal(entry.at("key"), depth + 1, path);
+            !result) return result;
+      }
+      if (auto result = validate_literal(entry.at("value"), depth + 1, path);
+          !result) return result;
+    }
+    return {};
+  }
+  if (kind == "variant") {
+    if (auto result = exact_object(value, path, {"kind", "tag", "payload"},
+                                   {"kind", "tag", "payload"}); !result) return result;
+    auto tag = string_field(value, "tag", path);
+    if (!tag) return unexpected(tag.error());
+    return validate_literal(value.at("payload"), depth + 1, path);
+  }
+  return unexpected(mi_error("negotiation_status_unexpected",
+                             std::string(path) + ": unknown canonical literal " + kind));
+}
+
 Result<void> validate_path_segment(const json& value, std::string_view path) {
   if (!value.is_object() || value.size() != 1) {
     return unexpected(mi_error("negotiation_status_unexpected",
@@ -228,13 +314,7 @@ Result<void> validate_path_segment(const json& value, std::string_view path) {
     return {};
   }
   if (key == "mapKey") {
-    // Static mirrorcpp-v1 rejects map-key paths during target emission, but the
-    // contract grammar remains strict and data-only here.
-    if (!payload.is_object()) {
-      return unexpected(mi_error("negotiation_status_unexpected",
-                                 std::string(path) + ": canonical literal expected"));
-    }
-    return {};
+    return validate_literal(payload, 0, path);
   }
   return unexpected(mi_error("negotiation_status_unexpected",
                              std::string(path) + ": unknown path selector"));
@@ -433,6 +513,13 @@ Result<ModelInterfaceFailure> decode_failure(const json& extension) {
       *status != ModelInterfaceStatus::unavailable) {
     return unexpected(mi_error("negotiation_status_unexpected",
                                "unexpected status on verify register_error"));
+  }
+  const auto bytes = extension.find("descriptorBytes");
+  if (bytes != extension.end() && !bytes->is_null() &&
+      !bytes->is_number_unsigned() &&
+      !(bytes->is_number_integer() && bytes->get<long long>() >= 0)) {
+    return unexpected(mi_error("negotiation_status_unexpected",
+                               "modelInterface.descriptorBytes: nonnegative integer expected"));
   }
   auto code = string_field(extension, "code", "modelInterface");
   if (!code || code->empty()) {

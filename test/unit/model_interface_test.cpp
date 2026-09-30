@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <deque>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -140,6 +141,20 @@ std::vector<std::string> successful_replay(std::string first) {
   };
 }
 
+nlohmann::json contract_with_map_key(const nlohmann::json& literal) {
+  auto contract = nlohmann::json::parse(counter_contract);
+  contract["actions"][0]["inputs"][0]["from"]["path"] =
+      nlohmann::json::array({nlohmann::json{{"mapKey", literal}}});
+  return contract;
+}
+
+nlohmann::json unavailable_failure() {
+  return nlohmann::json{
+      {"proto_step", "register_error"}, {"error", "model interface unavailable"},
+      {"modelInterface", {{"schema", model_interface_negotiation_schema},
+          {"status", "unavailable"}, {"code", "MI-UNAVAILABLE"}}}};
+}
+
 }  // namespace
 
 TEST_CASE("model interface digest is strict and branded at the wire boundary",
@@ -186,6 +201,124 @@ TEST_CASE("generated contract parsing rejects duplicate and unknown versioned fi
   auto unknown = make_verify_request({std::string(digest_hex), contract.dump()});
   REQUIRE_FALSE(unknown.has_value());
   REQUIRE(unknown.error().message.find("unknown field") != std::string::npos);
+}
+
+TEST_CASE("contract map-key codec validates every canonical literal form",
+          "[model-interface]") {
+  using nlohmann::json;
+  const std::vector<json> literals = {
+      json{{"kind", "int"}, {"value", "-9007199254740993123456789"}},
+      json{{"kind", "bool"}, {"value", true}},
+      json{{"kind", "str"}, {"value", std::string(300, 's')}},
+      json{{"kind", "null"}},
+      json::parse(R"({"kind":"set","values":[{"kind":"int","value":"1"}]})"),
+      json::parse(R"({"kind":"seq","values":[{"kind":"bool","value":false}]})"),
+      json::parse(R"({"kind":"tuple","values":[]})"),
+      json::parse(R"({"kind":"record","fields":[{"name":"ordinary-key","value":{"kind":"str","value":"text"}}]})"),
+      json::parse(R"({"kind":"map","entries":[{"key":{"kind":"tuple","values":[]},"value":{"kind":"null"}}]})"),
+      json::parse(R"({"kind":"variant","tag":"Some","payload":{"kind":"seq","values":[{"kind":"int","value":"2"}]}})"),
+  };
+  for (const auto& literal : literals) {
+    INFO(literal.dump());
+    const auto contract = contract_with_map_key(literal);
+    auto request = make_verify_request({std::string(digest_hex), contract.dump()});
+    REQUIRE(request.has_value());
+    REQUIRE(request->contract == contract);
+  }
+}
+
+TEST_CASE("contract map-key codec rejects malformed nested literals before registration",
+          "[model-interface]") {
+  using nlohmann::json;
+  const std::vector<json> literals = {
+      nullptr, json::array(), json::object(),
+      json{{"kind", "unknown"}}, json{{"kind", "int"}},
+      json{{"kind", "int"}, {"value", 1}},
+      json{{"kind", "int"}, {"value", ""}},
+      json{{"kind", "int"}, {"value", "-"}},
+      json{{"kind", "int"}, {"value", "0x10"}},
+      json{{"kind", "int"}, {"value", "1.5"}},
+      json{{"kind", "int"}, {"value", " 1"}},
+      json{{"kind", "bool"}, {"value", "true"}},
+      json{{"kind", "str"}, {"value", false}},
+      json{{"kind", "null"}, {"value", nullptr}},
+      json{{"kind", "set"}, {"values", json::object()}},
+      json::parse(R"({"kind":"seq","values":[{"kind":"bool","value":1}]})"),
+      json::parse(R"({"kind":"tuple","values":[{"kind":"null","extra":true}]})"),
+      json::parse(R"({"kind":"record","fields":[{"name":1,"value":{"kind":"null"}}]})"),
+      json::parse(R"({"kind":"record","fields":[{"name":"x","value":{"kind":"null"},"extra":true}]})"),
+      json::parse(R"({"kind":"map","entries":[{"key":{"kind":"unknown"},"value":{"kind":"null"}}]})"),
+      json::parse(R"({"kind":"map","entries":[{"key":{"kind":"null"},"value":{"kind":"str","value":1}}]})"),
+      json::parse(R"({"kind":"map","entries":[{"key":{"kind":"null"}}]})"),
+      json::parse(R"({"kind":"variant","tag":1,"payload":{"kind":"null"}})"),
+      json::parse(R"({"kind":"variant","tag":"Some","payload":{"kind":"int","value":"x"}})"),
+  };
+  for (const auto& literal : literals) {
+    INFO(literal.dump());
+    Calls calls;
+    SelectionFixture fixture(calls);
+    fixture.selection.metadata.contract_json = contract_with_map_key(literal).dump();
+    ScriptedTransport transport({});
+    auto result = run_client_with_traces_negotiated(
+        transport, config(), {"counter.itf.json"}, fixture.selection);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().kind == ErrorKind::model_interface);
+    REQUIRE(result.error().code == "negotiation_status_unexpected");
+    REQUIRE(transport.sent.empty());
+    REQUIRE(calls.factory == 0);
+    REQUIRE(calls.computer == 0);
+  }
+}
+
+TEST_CASE("contract map-key codec retains the raw JSON nesting bound",
+          "[model-interface]") {
+  nlohmann::json literal{{"kind", "null"}};
+  for (int depth = 0; depth < 130; ++depth) {
+    literal = nlohmann::json{{"kind", "variant"}, {"tag", "Some"},
+                            {"payload", std::move(literal)}};
+  }
+  auto request = make_verify_request(
+      {std::string(digest_hex), contract_with_map_key(literal).dump()});
+  REQUIRE_FALSE(request.has_value());
+  REQUIRE(request.error().code == "negotiation_status_unexpected");
+}
+
+TEST_CASE("registration failure descriptorBytes accepts absent null and nonnegative integers",
+          "[model-interface]") {
+  auto message = unavailable_failure();
+  REQUIRE(decode_model_interface_registration_reply(message.dump()).has_value());
+  const std::vector<nlohmann::json> values = {
+      nullptr, 0, 32768, std::numeric_limits<std::uint64_t>::max()};
+  for (const auto& value : values) {
+    message["modelInterface"]["descriptorBytes"] = value;
+    auto result = decode_model_interface_registration_reply(message.dump());
+    REQUIRE(result.has_value());
+    REQUIRE(result->failure.has_value());
+    REQUIRE(result->failure->code == "MI-UNAVAILABLE");
+  }
+}
+
+TEST_CASE("malformed failure descriptorBytes closes before binding construction",
+          "[model-interface]") {
+  const std::vector<nlohmann::json> values = {
+      -1, 0.0, 1.5, true, "32768", nlohmann::json::array(), nlohmann::json::object()};
+  for (const auto& value : values) {
+    INFO(value.dump());
+    auto message = unavailable_failure();
+    message["modelInterface"]["descriptorBytes"] = value;
+    Calls calls;
+    SelectionFixture fixture(calls);
+    ScriptedTransport transport({message.dump()});
+    auto result = run_client_with_traces_negotiated(
+        transport, config(), {"counter.itf.json"}, fixture.selection);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error().kind == ErrorKind::model_interface);
+    REQUIRE(result.error().code == "negotiation_status_unexpected");
+    REQUIRE(transport.close_calls == 1);
+    REQUIRE(calls.factory == 0);
+    REQUIRE(calls.computer == 0);
+    REQUIRE(calls.dispose == 0);
+  }
 }
 
 TEST_CASE("matched reply decoding is strict and additive only at the outer message",
