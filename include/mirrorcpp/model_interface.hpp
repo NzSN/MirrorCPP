@@ -23,6 +23,7 @@ inline constexpr std::string_view model_interface_negotiation_schema =
 inline constexpr std::string_view model_interface_descriptor_schema =
     "mirrors.model-interface-descriptor/v1";
 inline constexpr std::string_view mirrorcpp_target_profile = "mirrorcpp-v1";
+inline constexpr std::string_view mirrorcpp_typed_maps_target_profile = "mirrorcpp-v2";
 inline constexpr std::string_view state_computer_contract_version =
     "mirrors.state-computer/v1";
 

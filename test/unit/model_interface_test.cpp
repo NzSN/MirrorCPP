@@ -390,6 +390,34 @@ TEST_CASE("negotiated runner creates and disposes one binding only after matched
   REQUIRE(transport.sent.back().find("\"report_state\"") != std::string::npos);
 }
 
+TEST_CASE("typed-map profile selects its exact registry entry", "[model-interface]") {
+  Calls calls;
+  SelectionFixture fixture(calls);
+  const CompiledAdapterKey old_key{fixture.digest, "counter.mutable/v1",
+      std::string(mirrorcpp_target_profile), std::string(state_computer_contract_version)};
+  const auto factory = **fixture.registry.resolve(old_key);
+  fixture.registry = CompiledAdapterRegistry({{
+      {fixture.digest, "counter.mutable/v1", std::string(mirrorcpp_typed_maps_target_profile),
+       std::string(state_computer_contract_version)}, factory}});
+  fixture.selection.target_profile = std::string(mirrorcpp_typed_maps_target_profile);
+  ScriptedTransport transport(successful_replay(validated()));
+  const auto result = run_client_with_traces_negotiated(
+      transport, config(), {"counter.itf.json"}, fixture.selection);
+  REQUIRE(result.has_value());
+  REQUIRE(calls.factory == 1);
+  REQUIRE(calls.computer == 1);
+  REQUIRE(calls.dispose == 1);
+  fixture.selection.target_profile = "mirrorcpp-v99";
+  ScriptedTransport unsupported({});
+  const auto refused = run_client_with_traces_negotiated(
+      unsupported, config(), {"counter.itf.json"}, fixture.selection);
+  REQUIRE_FALSE(refused.has_value());
+  REQUIRE(refused.error().code == "target_profile_mismatch");
+  REQUIRE(unsupported.sent.empty());
+  REQUIRE(calls.factory == 1);
+  REQUIRE(calls.computer == 1);
+}
+
 TEST_CASE("required missing or wrong negotiation runs no adapter code",
           "[model-interface]") {
   for (const std::string& first : {

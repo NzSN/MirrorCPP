@@ -197,11 +197,11 @@ struct PreparedCompiledAdapter {
 
 Result<PreparedCompiledAdapter> prepare_compiled_adapter(
     const CompiledAdapterSelection& selection) {
-  if (selection.target_profile != mirrorcpp_target_profile) {
+  if (selection.target_profile != mirrorcpp_target_profile &&
+      selection.target_profile != mirrorcpp_typed_maps_target_profile) {
     return unexpected(local_model_interface_error(
         "target_profile_mismatch",
-        "negotiated runner requires target profile " +
-            std::string(mirrorcpp_target_profile)));
+        "negotiated runner requires target profile mirrorcpp-v1 or mirrorcpp-v2"));
   }
   if (selection.state_computer_contract_version != state_computer_contract_version) {
     return unexpected(local_model_interface_error(

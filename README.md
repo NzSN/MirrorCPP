@@ -1,5 +1,14 @@
 # MirrorCPP
 
+The additive generated `mirrorcpp-v2` typed-map profile uses the same public
+`Value`/`StateComputer` API. Negotiated runners accept exactly `mirrorcpp-v1`
+and `mirrorcpp-v2`; v1 remains the default. Select v2 explicitly in both the
+compiled registry key and `CompiledAdapterSelection.target_profile` using
+`mirrorcpp_typed_maps_target_profile`. The semantic digest, adapter ID, target
+profile, and StateComputer contract version must still match exactly. This
+client change permits selection; supported key shapes and callback validation
+are enforced by the corresponding generated binding and server codecs.
+
 See the [framework map](../Mirrors/Docs/framework-map.md) for client capabilities.
 Restricted execution uses the [Gate C++ SDK](../MirrorGate/sdk/cpp/README.md)
 and [source integration](../MirrorGate/integrations/mirrorcpp/README.md), without
