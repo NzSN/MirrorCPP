@@ -164,24 +164,27 @@ Value decode_value(const nlohmann::json& j) {
     return Value(std::move(seq));
   }
 
-  // Objects (in priority order): tagged forms, variant, then record.
-  if (auto it = j.find("#bigint"); it != j.end()) return decode_bigint(*it);
-  if (auto it = j.find("#tup"); it != j.end()) {
-    if (!it->is_array()) throw JsonError("malformed #tup: value must be an array");
+  // ITF markers require an exact singleton object and their expected payload
+  // shape. Other objects, including records with marker-looking keys, are
+  // ordinary records (Codec.Json.decValueF).
+  if (j.size() == 1 && j.contains("#bigint") && j["#bigint"].is_string())
+    return decode_bigint(j["#bigint"]);
+  if (j.size() == 1 && j.contains("#tup") && j["#tup"].is_array()) {
+    const auto& payload = j["#tup"];
     Value::Tuple t;
-    for (const auto& e : *it) t.elems.push_back(decode_value(e));
+    for (const auto& e : payload) t.elems.push_back(decode_value(e));
     return Value(std::move(t));
   }
-  if (auto it = j.find("#set"); it != j.end()) {
-    if (!it->is_array()) throw JsonError("malformed #set: value must be an array");
+  if (j.size() == 1 && j.contains("#set") && j["#set"].is_array()) {
+    const auto& payload = j["#set"];
     Value::Set s;
-    for (const auto& e : *it) s.elems.push_back(decode_value(e));
+    for (const auto& e : payload) s.elems.push_back(decode_value(e));
     return Value(std::move(s));
   }
-  if (auto it = j.find("#map"); it != j.end()) {
-    if (!it->is_array()) throw JsonError("malformed #map: value must be an array");
+  if (j.size() == 1 && j.contains("#map") && j["#map"].is_array()) {
+    const auto& payload = j["#map"];
     Value::Map m;
-    for (const auto& entry : *it) {
+    for (const auto& entry : payload) {
       if (!entry.is_array() || entry.size() != 2)
         throw JsonError("malformed #map: entries must be [key, value] pairs");
       // Keys decode as full Values: plain string -> Str, {"#bigint": …} -> Int (§3.4).
@@ -189,10 +192,8 @@ Value decode_value(const nlohmann::json& j) {
     }
     return Value(std::move(m));
   }
-  if (auto it = j.find("#unserializable"); it != j.end()) {
-    if (!it->is_string()) throw JsonError("malformed #unserializable: value must be a string");
-    return Value(Value::Unserializable{it->get<std::string>()});
-  }
+  if (j.size() == 1 && j.contains("#unserializable") && j["#unserializable"].is_string())
+    return Value(Value::Unserializable{j["#unserializable"].get<std::string>()});
   if (j.size() == 2 && j.contains("tag") && j.contains("value")) return decode_variant(j);
 
   Value::Record rec;  // all other objects -> Record

@@ -194,8 +194,9 @@ TEST_CASE("#bigint malformed digit strings throw JsonError", "[value][codec][big
   REQUIRE_THROWS_AS(decode_value(json{{"#bigint", "1.5"}}), JsonError);
   REQUIRE_THROWS_AS(decode_value(json{{"#bigint", " 5"}}), JsonError);
   REQUIRE_THROWS_AS(decode_value(json{{"#bigint", "--5"}}), JsonError);
-  REQUIRE_THROWS_AS(decode_value(json{{"#bigint", 42}}), JsonError);   // non-string value
-  REQUIRE_THROWS_AS(decode_value(json{{"#bigint", true}}), JsonError);
+  // Wrong payload shape is an ordinary singleton record, as in Codec.Json.
+  REQUIRE(decode_value(json{{"#bigint", 42}}).is_record());
+  REQUIRE(decode_value(json{{"#bigint", true}}).is_record());
 }
 
 TEST_CASE("bare JSON numbers decode as Int", "[value][codec]") {
@@ -256,6 +257,48 @@ TEST_CASE("single-key {tag} or {value} objects decode as Record", "[value][codec
 TEST_CASE("record field named tag/value but extra fields is a Record", "[value][codec][variant]") {
   auto v = decode_value(json{{"tag", "t1"}, {"value", 5}, {"other", true}});
   REQUIRE(v.is_record());
+}
+
+TEST_CASE("ITF markers require an exact singleton and payload shape", "[value][codec][record]") {
+  const std::vector<json> records{
+      json{{"#bigint", "bad"}, {"ordinary", 1}},
+      json{{"#set", json::array({1})}, {"ordinary", true}},
+      json{{"#tup", json::array({1})}, {"ordinary", true}},
+      json{{"#map", json::array({json::array({"k", 1})})}, {"ordinary", true}},
+      json{{"#unserializable", "text"}, {"ordinary", true}},
+      json{{"#bigint", "2"}, {"#set", json::array({1})}},
+      json{{"#set", true}},
+      json{{"#tup", "wrong"}},
+      json{{"#map", false}},
+      json{{"#unserializable", 1}},
+      json{{"#bigint", 1}},
+      json{{"#set", json::array()}, {"tag", "t"}, {"value", 1}},
+  };
+  for (const auto& input : records) {
+    CAPTURE(input);
+    const auto decoded = decode_value(input);
+    REQUIRE(decoded.is_record());
+    REQUIRE(decoded.as_record()->fields.size() == input.size());
+    REQUIRE(decode_value(encode_value(decoded)) == decoded);
+  }
+}
+
+TEST_CASE("exact marker and variant forms retain strict inner validation", "[value][codec][record]") {
+  REQUIRE_THROWS_AS(decode_value(json{{"#bigint", "bad"}}), JsonError);
+  REQUIRE_THROWS_AS(decode_value(json{{"#map", json::array({"bad entry"})}}), JsonError);
+  REQUIRE_THROWS_AS(decode_value(json{{"tag", 1}, {"value", 2}}), JsonError);
+}
+
+TEST_CASE("state decoding preserves marker-looking record fields", "[value][codec][record]") {
+  const json input{{"state", json{{"#set", json::array({json{{"#bigint", "7"}}})},
+                                     {"ordinary", true}}}};
+  const State state = decode_state(input);
+  REQUIRE(state.at("state").is_record());
+  REQUIRE(state.at("state").as_record()->fields.at("ordinary") == Value(true));
+  const auto& marker_field = state.at("state").as_record()->fields.at("#set");
+  REQUIRE(marker_field.is_seq());
+  REQUIRE(marker_field.get<Value::Seq>().elems == std::vector<Value>{Value(7)});
+  REQUIRE(decode_state(encode_state(state)) == state);
 }
 
 // ---- set equality (unordered) ----
