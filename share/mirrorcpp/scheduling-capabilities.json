@@ -1,0 +1,25 @@
+{
+  "schema": "mirrorcpp.scheduling-capabilities/v1",
+  "stability": "experimental",
+  "profiles": [
+    "mirrorcpp.cooperative-checkpoints/v1",
+    "mirrorcpp.finite-checkpoint-exploration/v1"
+  ],
+  "interfaces": [
+    "run_schedule",
+    "start_schedule",
+    "BindingSession",
+    "replay_with_traces",
+    "explore_finite"
+  ],
+  "claims": {
+    "fixedScheduleReplay": true,
+    "incrementalCheckpointBinding": true,
+    "finiteDeclaredExploration": true,
+    "genericNativeScheduler": false,
+    "arbitraryThreadPreemption": false,
+    "hardInProcessTermination": false,
+    "partialOrderReduction": false
+  },
+  "qualification": "Static API declaration only. Exact artifact observations belong to a separate acceptance record. Native WriteSentry bridge is application-specific."
+}

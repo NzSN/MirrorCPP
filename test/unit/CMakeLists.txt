@@ -110,3 +110,18 @@ target_link_libraries(mirrorcpp_golden_corpus_test PRIVATE
 target_compile_definitions(mirrorcpp_golden_corpus_test PRIVATE
   MIRRORCPP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 catch_discover_tests(mirrorcpp_golden_corpus_test)
+
+# Cooperative scheduler: no model service, sockets or subprocesses required.
+add_executable(mirrorcpp_schedule_test schedule_test.cpp)
+target_include_directories(mirrorcpp_schedule_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(mirrorcpp_schedule_test PRIVATE mirrorcpp::mirrorcpp Catch2::Catch2WithMain)
+catch_discover_tests(mirrorcpp_schedule_test PROPERTIES TIMEOUT 20)
+
+add_executable(mirrorcpp_schedule_binding_test schedule_binding_test.cpp)
+target_link_libraries(mirrorcpp_schedule_binding_test PRIVATE mirrorcpp::mirrorcpp Catch2::Catch2WithMain)
+catch_discover_tests(mirrorcpp_schedule_binding_test PROPERTIES TIMEOUT 20)
+
+add_executable(mirrorcpp_schedule_exploration_test schedule_exploration_test.cpp)
+target_include_directories(mirrorcpp_schedule_exploration_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(mirrorcpp_schedule_exploration_test PRIVATE mirrorcpp::mirrorcpp Catch2::Catch2WithMain)
+catch_discover_tests(mirrorcpp_schedule_exploration_test PROPERTIES TIMEOUT 30)

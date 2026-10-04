@@ -1,5 +1,10 @@
 # MirrorCPP Design
 
+The additive experimental cooperative scheduling module is specified in
+[deterministic-scheduling.md](deterministic-scheduling.md). It owns declared SUT
+worker threads and fixed-schedule replay; the blocking protocol client described
+below retains its existing execution contract.
+
 **Status:** Implemented client; this document retains the original design rationale.
 Current APIs are in the [README](../README.md) and [client header](../include/mirrorcpp/client.hpp).
 `query_job_result` preserves terminal outcomes; `query_job` is the compatible

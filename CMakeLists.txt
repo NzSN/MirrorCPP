@@ -52,6 +52,7 @@ include(CTest)   # provides BUILD_TESTING + enable_testing()
 # Dependencies (design §6)
 # ---------------------------------------------------------------------------
 include(FetchContent)
+find_package(Threads REQUIRED)
 
 # -- nlohmann_json >= 3.11: JSON DOM (header-only). find_package first,
 #    FetchContent fallback (no system headers on CI/dev machines).
@@ -116,6 +117,9 @@ add_library(mirrorcpp
   src/value.cpp
   src/protocol.cpp
   src/model_interface.cpp
+  src/schedule.cpp
+  src/schedule_binding.cpp
+  src/schedule_exploration.cpp
   src/client.cpp
   src/registry.cpp
   src/spec.cpp
@@ -136,7 +140,8 @@ target_include_directories(mirrorcpp PUBLIC
 # re-attaches them to the imported target (mirrorcppConfig.cmake.in), so the
 # exported target set never references third-party targets.
 target_link_libraries(mirrorcpp
-  PUBLIC $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
+  PUBLIC $<BUILD_INTERFACE:Threads::Threads>
+         $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
          $<BUILD_INTERFACE:Boost::headers>)
 if(MIRRORCPP_WITH_TLS)
   target_link_libraries(mirrorcpp
@@ -165,6 +170,8 @@ install(TARGETS mirrorcpp EXPORT mirrorcppTargets
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(DIRECTORY include/mirrorcpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES share/mirrorcpp/scheduling-capabilities.json
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/mirrorcpp)
 
 install(EXPORT mirrorcppTargets
   FILE mirrorcppTargets.cmake

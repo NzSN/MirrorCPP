@@ -3,6 +3,7 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+find_dependency(Threads)
 
 # Optional TLS: required only when the installed library was built with TLS.
 if(@MIRRORCPP_WITH_TLS@)
@@ -29,7 +30,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/mirrorcppTargets.cmake")
 # Re-attach the interface dependencies that were build-tree-only ($<BUILD_INTERFACE:...>)
 # so downstream consumers get include dirs and link flags transitively.
 if(TARGET mirrorcpp::mirrorcpp)
-  target_link_libraries(mirrorcpp::mirrorcpp INTERFACE nlohmann_json::nlohmann_json)
+  target_link_libraries(mirrorcpp::mirrorcpp INTERFACE Threads::Threads nlohmann_json::nlohmann_json)
   target_link_libraries(mirrorcpp::mirrorcpp INTERFACE Boost::headers)
   if(@MIRRORCPP_WITH_TLS@)
     target_link_libraries(mirrorcpp::mirrorcpp INTERFACE OpenSSL::SSL OpenSSL::Crypto)

@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #else
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/types.h>
@@ -50,12 +51,28 @@ ssize_t write_no_sigpipe(long fd, const char* data, std::size_t n) {
 #ifdef _WIN32
   return ::_write(static_cast<int>(fd), data, static_cast<unsigned>(n));
 #else
-  sigset_t set{}, old{};
+  sigset_t set{}, old{}, pending{};
   sigemptyset(&set);
   sigaddset(&set, SIGPIPE);
-  pthread_sigmask(SIG_BLOCK, &set, &old);
+  const int blocked = pthread_sigmask(SIG_BLOCK, &set, &old);
+  if (blocked != 0) { errno = blocked; return -1; }
+  if (sigpending(&pending) != 0) {
+    const int saved_errno = errno;
+    (void)pthread_sigmask(SIG_SETMASK, &old, nullptr);
+    errno = saved_errno;
+    return -1;
+  }
+  const bool already_pending = sigismember(&pending, SIGPIPE) == 1;
   const ssize_t r = ::write(fd, data, n);
-  pthread_sigmask(SIG_SETMASK, &old, nullptr);
+  const int saved_errno = errno;
+  // Restoring the mask with our new SIGPIPE still pending would deliver it
+  // before returning EPIPE. Consume only when no caller signal was pending.
+  if (r < 0 && saved_errno == EPIPE && !already_pending) {
+    const timespec zero{};
+    while (sigtimedwait(&set, nullptr, &zero) < 0 && errno == EINTR) {}
+  }
+  (void)pthread_sigmask(SIG_SETMASK, &old, nullptr);
+  errno = saved_errno;
   return r;
 #endif
 }

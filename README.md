@@ -9,6 +9,11 @@ profile, and StateComputer contract version must still match exactly. This
 client change permits selection; supported key shapes and callback validation
 are enforced by the corresponding generated binding and server codecs.
 
+The experimental [cooperative checkpoint scheduler](docs/deterministic-scheduling.md)
+replays fixed schedules on declared C++ worker threads and records actual
+observations and cleanup. Its portable fixture is DPM-1 acceptance; generated
+binding integration and production scheduling qualification remain separate.
+
 See the [framework map](../Mirrors/Docs/framework-map.md) for client capabilities.
 Restricted execution uses the [Gate C++ SDK](../MirrorGate/sdk/cpp/README.md)
 and [source integration](../MirrorGate/integrations/mirrorcpp/README.md), without

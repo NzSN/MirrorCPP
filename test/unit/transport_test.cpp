@@ -10,6 +10,10 @@
 
 // Internal framing helper, tested deterministically over a pipe.
 #include "detail/line.hpp"
+#include "detail/process.hpp"
+#include <signal.h>
+#include <pthread.h>
+#include <sys/wait.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -400,4 +404,43 @@ TEST_CASE("stdio: close() is idempotent", "[transport][stdio]") {
   const auto c2 = t->close();
   REQUIRE(c2.has_value());
   REQUIRE(*c2 == 0);
+}
+
+TEST_CASE("stdio: dead child writes preserve caller signal state", "[transport][stdio][sigpipe]") {
+  // Isolate a default-disposition SIGPIPE regression so a broken implementation
+  // fails this test rather than terminating the complete test runner.
+  for (int mode = 0; mode < 3; ++mode) {
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+      ::signal(SIGPIPE, SIG_DFL);
+      sigset_t empty{}, blocked{}, previous{}, pending{};
+      ::sigemptyset(&empty);
+      if (::pthread_sigmask(SIG_SETMASK, &empty, nullptr) != 0) ::_exit(10);
+      ::sigemptyset(&blocked); ::sigaddset(&blocked, SIGPIPE);
+      if (mode != 0 && ::pthread_sigmask(SIG_BLOCK, &blocked, &previous) != 0) ::_exit(11);
+      if (mode == 2 && ::raise(SIGPIPE) != 0) ::_exit(12);
+      detail::Subprocess process;
+      if (!process.spawn("/bin/false")) ::_exit(13);
+      const auto status = process.wait();
+      if (!status || *status != 1) ::_exit(14);
+      const auto written = process.write_stdin("after exit\n");
+      if (written || written.error().kind != ErrorKind::spawn) ::_exit(15);
+      if (::sigpending(&pending) != 0) ::_exit(16);
+      if (::sigismember(&pending, SIGPIPE) != (mode == 2 ? 1 : 0)) ::_exit(17);
+      sigset_t current{};
+      if (::pthread_sigmask(SIG_SETMASK, nullptr, &current) != 0) ::_exit(18);
+      if (::sigismember(&current, SIGPIPE) != (mode == 0 ? 0 : 1)) ::_exit(19);
+      if (mode == 2) {
+        const timespec zero{};
+        if (::sigtimedwait(&blocked, nullptr, &zero) != SIGPIPE) ::_exit(20);
+      }
+      ::_exit(0);
+    }
+    int status = 0;
+    REQUIRE(::waitpid(child, &status, 0) == child);
+    CAPTURE(mode, status);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 0);
+  }
 }

@@ -35,5 +35,19 @@ int main() {
   if (wire.find("\"invariant\":\"TraceComplete\"") == std::string::npos) return 4;
 
   std::puts("consumer: register encode round-trip OK");
+  // Exercise the installed scheduler and its transitive thread dependency.
+  namespace sc = mirrorcpp::schedule;
+  sc::Identity identity{std::string(64, '1'), std::string(64, '2'), std::string(64, '3')};
+  sc::Schedule schedule;
+  schedule.identity = identity;
+  schedule.steps = {{"worker", "$done"}};
+  sc::Adapter adapter{identity, {{"worker", "one-operation"}}, {},
+      [](const nlohmann::json&) {
+        return sc::Program{{{"worker", [](sc::Checkpoint&) {}}},
+                           [] { return nlohmann::json{{"actual", true}}; }, [] {}};
+      }};
+  auto execution = sc::run_schedule(schedule, adapter);
+  if (!execution->report().passed()) return 5;
+  std::puts("consumer: installed scheduler OK");
   return 0;
 }
