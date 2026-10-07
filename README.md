@@ -10,9 +10,11 @@ client change permits selection; supported key shapes and callback validation
 are enforced by the corresponding generated binding and server codecs.
 
 The experimental [cooperative checkpoint scheduler](docs/deterministic-scheduling.md)
-replays fixed schedules on declared C++ worker threads and records actual
-observations and cleanup. Its portable fixture is DPM-1 acceptance; generated
-binding integration and production scheduling qualification remain separate.
+implements DPM-0–DPM-5 for its declared profile: real C++ threads, incremental
+generated replay, finite exploration and installed acceptance, including the
+bounded application-specific native pilot. [Exact acceptance](../Mirrors/Plans/dpm2-dpm5-qualified-20261004/README.md)
+is separate from a full Windows SDK, whole WriteSentry qualification or arbitrary
+preemption. Applications supply checkpoint hooks and actual observations.
 
 See the [framework map](../Mirrors/Docs/framework-map.md) for client capabilities.
 Restricted execution uses the [Gate C++ SDK](../MirrorGate/sdk/cpp/README.md)

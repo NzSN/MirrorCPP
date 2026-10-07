@@ -1,11 +1,14 @@
 # Cooperative checkpoint scheduling (experimental)
 
-The `mirrorcpp::schedule` module implements DPM-1 of the framework's
-[deterministic production-MBT plan](../../Mirrors/Plans/deterministic-production-mbt-dpm0-dpm1.md).
-It coordinates real C++ worker threads under fixed checkpoint schedules. Its
-result describes scheduling and actual observations. Generated-binding/oracle
-integration, production WriteSentry integration and exhaustive exploration are
-later slices; a successful schedule alone is not model conformance.
+The `mirrorcpp::schedule` module and its binding/exploration layers implement
+DPM-0–DPM-5 for `mirrorcpp.cooperative-checkpoints/v1`. Real worker-stack
+checkpoint control, generated model comparison, bounded finite exploration and
+installed consumers are accepted; the application-specific four-case native
+WriteSentry pilot retains its own exact scope. See
+[framework scheduling](../../Mirrors/Docs/deterministic-scheduling.md) and
+[retained acceptance](../../Mirrors/Plans/dpm2-dpm5-qualified-20261004/README.md).
+A successful local schedule alone is not model conformance or unrestricted
+concurrent correctness; the later sections describe comparison and cleanup.
 
 ## Interface
 
