@@ -10,6 +10,23 @@ WriteSentry pilot retains its own exact scope. See
 A successful local schedule alone is not model conformance or unrestricted
 concurrent correctness; the later sections describe comparison and cleanup.
 
+## Generated integration kit and receipt timeline
+
+[Mirrors kit/timeline tooling](../../Mirrors/Docs/dpm-usability-design.md)
+now supplies `model_interface_gen generate-dpm/check-dpm` helpers, canonical
+mapping metadata, application seeds and checklists for this language’s v1/v2
+DPM targets. Applications connect `stepFor`/`step_for` to the existing binding
+session and supply real worker factories, checkpoint calls and observations.
+Copy application seeds before editing; regenerate owned helpers with the
+compiler. Synchronous ECMA and Lean have no accepted DPM execution profile.
+
+The read-only `timeline.py --receipt FILE --format text|json` renders actual
+SDK comparison/binding/checkpoint receipts with model outcome and cleanup
+separate. Its [source acceptance](../../Mirrors/Plans/dpm-usability-evidence-20261007/README.md)
+does not renew the frozen SDK/native/package qualification above. Schedule
+reduction, an installed cross-language CLI and synchronization wrappers
+remain approved follow-ons.
+
 ## Interface
 
 Include `<mirrorcpp/schedule.hpp>` (also available in the umbrella header).

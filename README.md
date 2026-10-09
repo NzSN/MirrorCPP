@@ -38,6 +38,11 @@ authentication always happens in the mTLS handshake).
 
 The complete design lives in [docs/design.md](docs/design.md).
 
+The newer [generated DPM kit and receipt timeline](../Mirrors/Docs/dpm-usability-design.md)
+have source acceptance only. They prepare explicit mapping helpers and render
+actual receipts; application hooks/observations and the frozen installed/native
+acceptance remain separate. F3–F5 are approved follow-ons.
+
 ## Features
 
 - **Faithful value model**: arbitrary-precision integers (`{"#bigint": "…"}`),
