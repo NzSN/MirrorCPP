@@ -120,6 +120,7 @@ add_library(mirrorcpp
   src/schedule.cpp
   src/schedule_binding.cpp
   src/schedule_exploration.cpp
+  src/schedule_sync.cpp
   src/client.cpp
   src/registry.cpp
   src/spec.cpp
@@ -171,7 +172,11 @@ install(TARGETS mirrorcpp EXPORT mirrorcppTargets
 
 install(DIRECTORY include/mirrorcpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES share/mirrorcpp/scheduling-capabilities.json
+  share/mirrorcpp/controlled-sync-capabilities.json
   DESTINATION ${CMAKE_INSTALL_DATADIR}/mirrorcpp)
+
+install(FILES examples/controlled_sync.cpp
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/mirrorcpp/examples)
 
 install(EXPORT mirrorcppTargets
   FILE mirrorcppTargets.cmake

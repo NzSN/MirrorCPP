@@ -125,3 +125,7 @@ add_executable(mirrorcpp_schedule_exploration_test schedule_exploration_test.cpp
 target_include_directories(mirrorcpp_schedule_exploration_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
 target_link_libraries(mirrorcpp_schedule_exploration_test PRIVATE mirrorcpp::mirrorcpp Catch2::Catch2WithMain)
 catch_discover_tests(mirrorcpp_schedule_exploration_test PROPERTIES TIMEOUT 30)
+
+add_executable(mirrorcpp_schedule_sync_test schedule_sync_test.cpp)
+target_link_libraries(mirrorcpp_schedule_sync_test PRIVATE mirrorcpp::mirrorcpp Catch2::Catch2WithMain)
+catch_discover_tests(mirrorcpp_schedule_sync_test PROPERTIES TIMEOUT 30)
