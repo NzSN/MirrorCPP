@@ -26,6 +26,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <signal.h>
 #include <string>
@@ -142,6 +144,64 @@ TEST_CASE("tls: client key mode 0644 is refused, 0600 works", "[tls]") {
   const auto cl = ok.value()->close();
   REQUIRE(cl.has_value());
   REQUIRE(*cl == 0L);
+}
+
+TEST_CASE("tls: exact private-key mode is checked without changing credentials", "[tls][key-mode]") {
+  const auto& c = certs();
+  const auto read_bytes = [](const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+  };
+  const std::string key = c.dir + "/mode-matrix.key";
+  const std::string original = read_bytes(c.client_key);
+  std::filesystem::copy_file(c.client_key, key,
+      std::filesystem::copy_options::overwrite_existing);
+  for (const mode_t mode : {0400, 0500, 0700, 0644, 0660, 01600, 02600, 04600}) {
+    INFO("requested mode " << std::oct << mode);
+    REQUIRE(::chmod(key.c_str(), mode) == 0);
+    struct stat before {};
+    REQUIRE(::stat(key.c_str(), &before) == 0);
+    // Failure to establish a fixture is an explicit platform limitation, not
+    // an unexercised permission-policy pass.
+    REQUIRE((before.st_mode & 07777) == mode);
+    auto opts = default_opts();
+    opts.key_path = key;
+    auto result = connect_tls("127.0.0.1", 1, opts);
+    REQUIRE_FALSE(result);
+    REQUIRE(result.error().kind == ErrorKind::tls);
+    REQUIRE(result.error().message.find("must be mode 0600") != std::string::npos);
+    struct stat after {};
+    REQUIRE(::stat(key.c_str(), &after) == 0);
+    REQUIRE((after.st_mode & 07777) == mode);
+    REQUIRE(read_bytes(key) == original);
+  }
+  REQUIRE(::chmod(key.c_str(), 0600) == 0);
+  {
+    TlsTestServer srv(c.ca, c.server_cert, c.server_key, TLS1_3_VERSION, TLS1_3_VERSION, true);
+    auto opts = default_opts();
+    opts.key_path = key;
+    auto result = connect_tls("127.0.0.1", static_cast<std::uint16_t>(srv.port()), opts);
+    REQUIRE(result);
+    REQUIRE(result.value()->close());
+  }
+  struct stat accepted {};
+  REQUIRE(::stat(key.c_str(), &accepted) == 0);
+  REQUIRE((accepted.st_mode & 07777) == 0600);
+  REQUIRE(read_bytes(key) == original);
+
+  const std::string invalid = c.dir + "/mode-matrix-invalid.key";
+  { std::ofstream stream(invalid, std::ios::binary); stream << "invalid PEM\n"; }
+  REQUIRE(::chmod(invalid.c_str(), 0600) == 0);
+  auto opts = default_opts();
+  opts.key_path = invalid;
+  auto result = connect_tls("127.0.0.1", 1, opts);
+  REQUIRE_FALSE(result);
+  REQUIRE(result.error().message.find("must be mode 0600") == std::string::npos);
+  REQUIRE(result.error().message.find("SSL_CTX_use_PrivateKey_file") != std::string::npos);
+  REQUIRE(read_bytes(invalid) == "invalid PEM\n");
+  struct stat invalid_after {};
+  REQUIRE(::stat(invalid.c_str(), &invalid_after) == 0);
+  REQUIRE((invalid_after.st_mode & 07777) == 0600);
 }
 
 TEST_CASE("tls: TLS 1.2-only server fails against the TLS 1.3-only client", "[tls]") {

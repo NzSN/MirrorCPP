@@ -83,6 +83,12 @@ acceptance remain separate. F3–F5 are approved follow-ons.
 
 ## Building
 
+TLS client keys on POSIX must have low `07777` mode bits exactly `0600`.
+The conformance fix rejects previously accepted `0400`, owner-executable and
+special-bit modes. Callers must prepare compliant key copies or update their
+deployment themselves; the client never chmods or rewrites caller-owned keys.
+Windows keeps its existing POSIX-mode exception and has no new ACL guarantee.
+
 ```sh
 cmake -S . -B build
 cmake --build build -j$(nproc)

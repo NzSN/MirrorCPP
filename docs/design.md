@@ -246,8 +246,10 @@ Full procedure (ModelMirrors `docs/protocol-spec.md`, "Discovery and mTLS (Clien
    (Defense in depth — the handshake already authenticates.)
 4. **Session**: identical to stdio/TCP; the first message must be `Register*`.
 
-Client-side hygiene mirrored from the Haskell/TS clients: the **client private key file must be
-mode `0600`** on POSIX (`mode & 0o077 != 0` → refuse to connect); skipped on Windows.
+The **client private key file must be mode `0600`** on POSIX: the low `07777`
+bits must equal `0600`, including owner execute and special bits. Validation
+precedes credential loading and connection and never changes the caller's key.
+The POSIX check is skipped on Windows; it does not assert Windows ACL coverage.
 
 ## 4. Architecture
 
@@ -516,8 +518,8 @@ Implementation notes:
   - `SSL_CTX_set_min_proto_version`/`max` to `TLS1_3_VERSION` — 1.3 only.
   - `SSL_CTX_load_verify_locations(ca)`; `SSL_CTX_use_certificate_chain_file(cert)`;
     `SSL_CTX_use_PrivateKey_file(key)`; `SSL_CTX_check_private_key`.
-  - POSIX: `stat(key_path)` and refuse when `mode & 0777 & 0o077 != 0` (mirrors
-    `Protocol/Transport/Tls.hs`); skipped on Windows.
+  - POSIX: `stat(key_path)` and refuse unless `(mode & 07777) == 0600`;
+    skipped on Windows.
   - Hostname verification: `SSL_set1_host` for DNS names, `SSL_set1_ip_asc` for IP literals
     (registry entries are usually IPs); `SSL_VERIFY_PEER`.
   - Handshake with deadline; afterwards compute the pin:

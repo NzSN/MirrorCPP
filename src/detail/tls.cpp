@@ -53,8 +53,8 @@ std::string ssl_error_string() {
   return std::string(buf);
 }
 
-// POSIX only: refuse to use a client key with group/other permission bits set
-// (design §9 / Protocol/Transport/Tls.hs — mirrors the Haskell/TS clients).
+// POSIX C27: the low 07777 bits must equal 0600. Validate caller-owned
+// credentials without modifying their mode or contents.
 Result<void> check_key_mode(const std::filesystem::path& key_path) {
 #ifdef _WIN32
   return {};
@@ -64,10 +64,10 @@ Result<void> check_key_mode(const std::filesystem::path& key_path) {
     return unexpected(Error(ErrorKind::tls, "cannot stat client key " + key_path.string() +
                             ": " + std::strerror(errno)));
   }
-  if ((st.st_mode & 0077) != 0) {
+  if ((st.st_mode & 07777) != 0600) {
     return unexpected(Error(ErrorKind::tls,
                             "client key file " + key_path.string() +
-                            " must be mode 0600 (group/other permission bits set)"));
+                            " must be mode 0600 (including execute and special bits)"));
   }
   return {};
 #endif
