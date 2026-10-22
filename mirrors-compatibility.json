@@ -34,7 +34,7 @@
     "sourceTreeSha256": "fbc8c76c2267edc4737874354a9f19deafeb221389831da7f868904f051dcd7b",
     "evidence": {
       "url": "https://github.com/NzSN/Mirrors/blob/main/Plans/version-migration-2026-10-22/evidence/transport-compatibility.json",
-      "sha256": "2d4a5dd29faf64709213b764a0c10d81dd7c5455b388a2b452a94e5da2835072"
+      "sha256": "40c2dafdc9afb061738e70e26d38baf42dee0ebbb143bac810587c258314fa0b"
     }
   },
   "limits": [
