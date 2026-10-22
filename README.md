@@ -1,5 +1,7 @@
 # MirrorCPP
 
+[Product versions and compatibility](docs/versioning.md).
+
 The additive generated `mirrorcpp-v2` typed-map profile uses the same public
 `Value`/`StateComputer` API. Negotiated runners accept exactly `mirrorcpp-v1`
 and `mirrorcpp-v2`; v1 remains the default. Select v2 explicitly in both the
